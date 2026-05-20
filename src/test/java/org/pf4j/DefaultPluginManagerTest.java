@@ -395,7 +395,16 @@ class DefaultPluginManagerTest {
         pluginManager.stopPlugin(pluginZip1.pluginId());
         assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip1.pluginId()).getPluginState());
 
+        // try to delete plugin1 while plugin2 depends on it -- should be rejected
         boolean deleted = pluginManager.deletePlugin(pluginZip1.pluginId());
+        assertFalse(deleted);
+
+        // delete plugin2 (the dependent) first
+        deleted = pluginManager.deletePlugin(pluginZip2.pluginId());
+        assertTrue(deleted);
+
+        // now delete plugin1 -- should succeed
+        deleted = pluginManager.deletePlugin(pluginZip1.pluginId());
         assertTrue(deleted);
 
         assertEquals(0, pluginManager.getPlugins().size());
@@ -430,10 +439,19 @@ class DefaultPluginManagerTest {
         pluginManager.stopPlugin(pluginZip2.pluginId());
         assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip2.pluginId()).getPluginState());
 
+        // try to delete plugin2 while plugin3 depends on it -- should be rejected
         boolean deleted = pluginManager.deletePlugin(pluginZip2.pluginId());
+        assertFalse(deleted);
+
+        // delete plugin3 (the dependent) first
+        deleted = pluginManager.deletePlugin(pluginZip3.pluginId());
         assertTrue(deleted);
 
-        assertEquals(1, pluginManager.getPlugins().size()); // myPlugin1 should still be there, myPlugin2 and myPlugin3 should be gone
+        // now delete plugin2 -- should succeed
+        deleted = pluginManager.deletePlugin(pluginZip2.pluginId());
+        assertTrue(deleted);
+
+        assertEquals(1, pluginManager.getPlugins().size()); // myPlugin1 should still be there
 
         pluginManager.stopPlugin(pluginZip1.pluginId());
         assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip1.pluginId()).getPluginState());

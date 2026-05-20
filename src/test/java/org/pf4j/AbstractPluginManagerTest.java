@@ -28,7 +28,9 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
@@ -123,6 +125,21 @@ public class AbstractPluginManagerTest {
 
     @Test
     void unloadPluginCallsResolveDependenciesOnce() {
+        PluginWrapper pluginWrapper = createPluginWrapper("plugin1");
+
+        pluginManager.addPlugin(pluginWrapper);
+        pluginManager.resolveDependencies();
+
+        // reset the mock to not count the explicit call of resolveDependencies
+        reset(pluginManager);
+
+        pluginManager.unloadPlugin("plugin1", true);
+
+        verify(pluginManager, times(1)).resolveDependencies();
+    }
+
+    @Test
+    void unloadPluginRejectedWhenHasDependents() {
         PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1", "plugin2");
         PluginWrapper pluginWrapper2 = createPluginWrapper("plugin2");
 
@@ -130,12 +147,11 @@ public class AbstractPluginManagerTest {
         pluginManager.addPlugin(pluginWrapper2);
         pluginManager.resolveDependencies();
 
-        // reset the mock to not count the explicit call of resolveDependencies
-        reset(pluginManager);
+        boolean result = pluginManager.unloadPlugin("plugin2", true);
+        assertFalse(result);
 
-        pluginManager.unloadPlugin("plugin2", true);
-
-        verify(pluginManager, times(1)).resolveDependencies();
+        // plugin2 should still be present
+        assertNotNull(pluginManager.getPlugin("plugin2"));
     }
 
     @Test

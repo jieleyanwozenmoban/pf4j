@@ -140,9 +140,19 @@ public class PluginDependencyTest {
         pluginManager.stopPlugin("plugin.a");
         assertEquals(0, pluginManager.getStartedPlugins().size());
 
-        // unload A, both A and B should be unloaded
-        pluginManager.unloadPlugin("plugin.a");
-        assertEquals(0, pluginManager.getResolvedPlugins().size());
+        // try to unload A while B still depends on it -- should be rejected
+        boolean unloaded = pluginManager.unloadPlugin("plugin.a");
+        assertFalse(unloaded);
+        assertEquals(2, pluginManager.getPlugins().size());
+
+        // unload B (the dependent) first -- should succeed
+        unloaded = pluginManager.unloadPlugin("plugin.b");
+        assertTrue(unloaded);
+        assertEquals(1, pluginManager.getPlugins().size());
+
+        // now unload A -- should succeed since no dependents remain
+        unloaded = pluginManager.unloadPlugin("plugin.a");
+        assertTrue(unloaded);
         assertEquals(0, pluginManager.getPlugins().size());
     }
 
