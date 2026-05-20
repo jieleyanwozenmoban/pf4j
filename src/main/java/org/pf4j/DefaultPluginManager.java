@@ -15,13 +15,15 @@
  */
 package org.pf4j;
 
-import org.pf4j.util.FileUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Default implementation of the {@link PluginManager} interface.
@@ -38,6 +40,9 @@ public class DefaultPluginManager extends AbstractPluginManager {
 
     public static final String PLUGINS_DIR_CONFIG_PROPERTY_NAME = "pf4j.pluginsConfigDir";
 
+    private List<PluginLoadingProcessor> pluginLoadingProcessors;
+    private List<PluginLoadingProcessor> loadPluginProcessors;
+
     public DefaultPluginManager() {
         super();
     }
@@ -48,6 +53,16 @@ public class DefaultPluginManager extends AbstractPluginManager {
 
     public DefaultPluginManager(List<Path> pluginsRoots) {
         super(pluginsRoots);
+    }
+
+    @Override
+    public String loadPlugin(Path pluginPath) {
+        log.debug("Loading plugin from '{}'", pluginPath);
+
+        PluginLoadingContext context = new PluginLoadingContext(this, pluginPath);
+        executeProcessors(getLoadPluginProcessors(), context);
+
+        return context.getPluginWrapper().getDescriptor().getPluginId();
     }
 
     @Override
@@ -119,24 +134,56 @@ public class DefaultPluginManager extends AbstractPluginManager {
         log.info("PF4J version {} in '{}' mode", getVersion(), getRuntimeMode());
     }
 
-    /**
-     * Load a plugin from disk. If the path is a zip file, first unpack.
-     *
-     * @param pluginPath plugin location on disk
-     * @return PluginWrapper for the loaded plugin or null if not loaded
-     * @throws PluginRuntimeException if problems during load
-     */
     @Override
     protected PluginWrapper loadPluginFromPath(Path pluginPath) {
-        // First unzip any ZIP files
-        try {
-            pluginPath = FileUtils.expandIfZip(pluginPath);
-        } catch (Exception e) {
-            log.warn("Failed to unzip " + pluginPath, e);
-            return null;
+        PluginLoadingContext context = new PluginLoadingContext(this, pluginPath);
+        executeProcessors(getPluginLoadingProcessors(), context);
+
+        return context.getPluginWrapper();
+    }
+
+    protected List<PluginLoadingProcessor> createPluginLoadingProcessors() {
+        return Arrays.asList(
+            new ExpandPluginArchiveProcessor(),
+            new ValidatePluginPathUniquenessProcessor(),
+            new ParsePluginDescriptorProcessor(),
+            new ValidatePluginIdUniquenessProcessor(),
+            new CreatePluginClassLoaderProcessor(),
+            new InitializePluginWrapperProcessor()
+        );
+    }
+
+    protected List<PluginLoadingProcessor> createLoadPluginProcessors() {
+        List<PluginLoadingProcessor> processors = new ArrayList<>();
+        processors.add(new ValidatePluginPathProcessor());
+        processors.addAll(getPluginLoadingProcessors());
+        processors.add(new ResolvePluginDependenciesProcessor());
+
+        return processors;
+    }
+
+    protected List<PluginLoadingProcessor> getPluginLoadingProcessors() {
+        if (pluginLoadingProcessors == null) {
+            pluginLoadingProcessors = Collections.unmodifiableList(new ArrayList<>(createPluginLoadingProcessors()));
         }
 
-        return super.loadPluginFromPath(pluginPath);
+        return pluginLoadingProcessors;
+    }
+
+    protected List<PluginLoadingProcessor> getLoadPluginProcessors() {
+        if (loadPluginProcessors == null) {
+            loadPluginProcessors = Collections.unmodifiableList(new ArrayList<>(createLoadPluginProcessors()));
+        }
+
+        return loadPluginProcessors;
+    }
+
+    protected void executeProcessors(List<PluginLoadingProcessor> processors, PluginLoadingContext context) {
+        for (PluginLoadingProcessor processor : processors) {
+            if (!processor.process(context)) {
+                return;
+            }
+        }
     }
 
 }
