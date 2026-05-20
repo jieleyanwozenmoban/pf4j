@@ -15,7 +15,7 @@
  */
 package org.pf4j;
 
-import org.pf4j.util.FileUtils;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -120,23 +120,18 @@ public class DefaultPluginManager extends AbstractPluginManager {
     }
 
     /**
-     * Load a plugin from disk. If the path is a zip file, first unpack.
+     * 创建插件加载链，包含所有必要的处理步骤
      *
-     * @param pluginPath plugin location on disk
-     * @return PluginWrapper for the loaded plugin or null if not loaded
-     * @throws PluginRuntimeException if problems during load
+     * @return 插件加载链
      */
     @Override
-    protected PluginWrapper loadPluginFromPath(Path pluginPath) {
-        // First unzip any ZIP files
-        try {
-            pluginPath = FileUtils.expandIfZip(pluginPath);
-        } catch (Exception e) {
-            log.warn("Failed to unzip " + pluginPath, e);
-            return null;
-        }
-
-        return super.loadPluginFromPath(pluginPath);
+    protected PluginLoadingChain createPluginLoadingChain() {
+        return new PluginLoadingChain()
+            .addProcessor(new ArchiveExtractionProcessor())
+            .addProcessor(new PathValidationProcessor())
+            .addProcessor(new DescriptorParsingProcessor())
+            .addProcessor(new ClassLoaderCreationProcessor())
+            .addProcessor(new PluginWrapperInitializationProcessor());
     }
 
 }

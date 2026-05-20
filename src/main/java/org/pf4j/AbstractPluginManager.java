@@ -15,6 +15,7 @@
  */
 package org.pf4j;
 
+
 import org.pf4j.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -817,6 +818,8 @@ public abstract class AbstractPluginManager implements PluginManager {
 
     protected abstract VersionManager createVersionManager();
 
+    protected abstract PluginLoadingChain createPluginLoadingChain();
+
     protected PluginDescriptorFinder getPluginDescriptorFinder() {
         return pluginDescriptorFinder;
     }
@@ -965,67 +968,9 @@ public abstract class AbstractPluginManager implements PluginManager {
      * @throws InvalidPluginDescriptorException if the plugin is invalid
      */
     protected PluginWrapper loadPluginFromPath(Path pluginPath) {
-        // Test for plugin path duplication
-        String pluginId = idForPath(pluginPath);
-        if (pluginId != null) {
-            throw new PluginAlreadyLoadedException(pluginId, pluginPath);
-        }
-
-        // Retrieve and validate the plugin descriptor
-        PluginDescriptorFinder pluginDescriptorFinder = getPluginDescriptorFinder();
-        log.debug("Use '{}' to find plugins descriptors", pluginDescriptorFinder);
-        log.debug("Finding plugin descriptor for plugin '{}'", pluginPath);
-        PluginDescriptor pluginDescriptor = pluginDescriptorFinder.find(pluginPath);
-        validatePluginDescriptor(pluginDescriptor);
-
-        // Check there are no loaded plugins with the retrieved id
-        pluginId = pluginDescriptor.getPluginId();
-        if (plugins.containsKey(pluginId)) {
-            PluginWrapper loadedPlugin = getPlugin(pluginId);
-            throw new PluginRuntimeException("There is an already loaded plugin ({}) "
-                    + "with the same id ({}) as the plugin at path '{}'. Simultaneous loading "
-                    + "of plugins with the same PluginId is not currently supported.\n"
-                    + "As a workaround you may include PluginVersion and PluginProvider "
-                    + "in PluginId.",
-                loadedPlugin, pluginId, pluginPath);
-        }
-
-        log.debug("Found descriptor {}", pluginDescriptor);
-        String pluginClassName = pluginDescriptor.getPluginClass();
-        log.debug("Class '{}' for plugin '{}'",  pluginClassName, pluginPath);
-
-        // load plugin
-        log.debug("Loading plugin '{}'", pluginPath);
-        ClassLoader pluginClassLoader = getPluginLoader().loadPlugin(pluginPath, pluginDescriptor);
-        log.debug("Loaded plugin '{}' with class loader '{}'", pluginPath, pluginClassLoader);
-
-        PluginWrapper pluginWrapper = createPluginWrapper(pluginDescriptor, pluginPath, pluginClassLoader);
-
-        // test for disabled plugin
-        if (isPluginDisabled(pluginDescriptor.getPluginId())) {
-            log.info("Plugin '{}' is disabled", pluginPath);
-            pluginWrapper.setPluginState(PluginState.DISABLED);
-        }
-
-        // validate the plugin
-        if (!isPluginValid(pluginWrapper)) {
-            log.warn("Plugin '{}' is invalid and it will be disabled", pluginPath);
-            pluginWrapper.setPluginState(PluginState.DISABLED);
-            pluginWrapper.setFailedException(new PluginRuntimeException("Plugin validation failed"));
-        }
-
-        log.debug("Created wrapper '{}' for plugin '{}'", pluginWrapper, pluginPath);
-
-        pluginId = pluginDescriptor.getPluginId();
-
-        // add plugin to the list with plugins
-        addPlugin(pluginWrapper);
-        getUnresolvedPlugins().add(pluginWrapper);
-
-        // add plugin class loader to the list with class loaders
-        getPluginClassLoaders().put(pluginId, pluginClassLoader);
-
-        return pluginWrapper;
+        PluginLoadingContext context = new PluginLoadingContext(pluginPath);
+        createPluginLoadingChain().process(context, this);
+        return context.getPluginWrapper();
     }
 
     /**
@@ -1216,7 +1161,7 @@ public abstract class AbstractPluginManager implements PluginManager {
         this.resolveRecoveryStrategy = resolveRecoveryStrategy;
     }
 
-    void addPlugin(PluginWrapper pluginWrapper) {
+    protected void addPlugin(PluginWrapper pluginWrapper) {
         plugins.put(pluginWrapper.getPluginId(), pluginWrapper);
     }
 
