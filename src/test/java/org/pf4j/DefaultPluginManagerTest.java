@@ -396,11 +396,9 @@ class DefaultPluginManagerTest {
         assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip1.pluginId()).getPluginState());
 
         boolean deleted = pluginManager.deletePlugin(pluginZip1.pluginId());
-        assertTrue(deleted);
+        assertFalse(deleted);
 
-        assertEquals(0, pluginManager.getPlugins().size());
-
-        assertThrows(PluginNotFoundException.class, () -> pluginManager.stopPlugin(pluginZip2.pluginId()));
+        assertEquals(2, pluginManager.getPlugins().size());
     }
 
     @Test
@@ -431,12 +429,9 @@ class DefaultPluginManagerTest {
         assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip2.pluginId()).getPluginState());
 
         boolean deleted = pluginManager.deletePlugin(pluginZip2.pluginId());
-        assertTrue(deleted);
+        assertFalse(deleted);
 
-        assertEquals(1, pluginManager.getPlugins().size()); // myPlugin1 should still be there, myPlugin2 and myPlugin3 should be gone
-
-        pluginManager.stopPlugin(pluginZip1.pluginId());
-        assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip1.pluginId()).getPluginState());
+        assertEquals(3, pluginManager.getPlugins().size()); // all plugins should still be there because delete failed
     }
 
     @Test

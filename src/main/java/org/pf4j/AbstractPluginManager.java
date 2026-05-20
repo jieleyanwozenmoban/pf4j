@@ -257,7 +257,9 @@ public abstract class AbstractPluginManager implements PluginManager {
     @Override
     public void unloadPlugins() {
         // wrap resolvedPlugins in new list because of concurrent modification
-        for (PluginWrapper pluginWrapper : new ArrayList<>(resolvedPlugins)) {
+        List<PluginWrapper> pluginsToUnload = new ArrayList<>(resolvedPlugins);
+        Collections.reverse(pluginsToUnload);
+        for (PluginWrapper pluginWrapper : pluginsToUnload) {
             unloadPlugin(pluginWrapper.getPluginId());
         }
     }
@@ -293,13 +295,10 @@ public abstract class AbstractPluginManager implements PluginManager {
      * @return true if the plugin was unloaded, otherwise false
      */
     protected boolean unloadPlugin(String pluginId, boolean unloadDependents, boolean resolveDependencies) {
-        if (unloadDependents) {
-            List<String> dependents = dependencyResolver.getDependents(pluginId);
-            while (!dependents.isEmpty()) {
-                String dependent = dependents.remove(0);
-                unloadPlugin(dependent, false, false);
-                dependents.addAll(0, dependencyResolver.getDependents(dependent));
-            }
+        List<String> dependents = dependencyResolver.getDependents(pluginId);
+        if (!dependents.isEmpty()) {
+            log.error("Plugin '{}' cannot be unloaded because it is required by other plugins: {}", pluginId, dependents);
+            return false;
         }
 
         if (!plugins.containsKey(pluginId)) {

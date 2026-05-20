@@ -122,7 +122,7 @@ public class AbstractPluginManagerTest {
     }
 
     @Test
-    void unloadPluginCallsResolveDependenciesOnce() {
+    void unloadPluginWithDependentsReturnsFalse() {
         PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1", "plugin2");
         PluginWrapper pluginWrapper2 = createPluginWrapper("plugin2");
 
@@ -133,7 +133,23 @@ public class AbstractPluginManagerTest {
         // reset the mock to not count the explicit call of resolveDependencies
         reset(pluginManager);
 
-        pluginManager.unloadPlugin("plugin2", true);
+        boolean result = pluginManager.unloadPlugin("plugin2", true);
+
+        assertEquals(false, result);
+        verify(pluginManager, never()).resolveDependencies();
+    }
+
+    @Test
+    void unloadPluginCallsResolveDependenciesOnce() {
+        PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1");
+
+        pluginManager.addPlugin(pluginWrapper1);
+        pluginManager.resolveDependencies();
+
+        // reset the mock to not count the explicit call of resolveDependencies
+        reset(pluginManager);
+
+        pluginManager.unloadPlugin("plugin1", true);
 
         verify(pluginManager, times(1)).resolveDependencies();
     }

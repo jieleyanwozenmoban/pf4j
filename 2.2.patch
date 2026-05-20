@@ -1,0 +1,124 @@
+diff --git a/src/main/java/org/pf4j/AbstractPluginManager.java b/src/main/java/org/pf4j/AbstractPluginManager.java
+index 29f26c5..5433b7a 100755
+--- a/src/main/java/org/pf4j/AbstractPluginManager.java
++++ b/src/main/java/org/pf4j/AbstractPluginManager.java
+@@ -257,7 +257,9 @@ public abstract class AbstractPluginManager implements PluginManager {
+     @Override
+     public void unloadPlugins() {
+         // wrap resolvedPlugins in new list because of concurrent modification
+-        for (PluginWrapper pluginWrapper : new ArrayList<>(resolvedPlugins)) {
++        List<PluginWrapper> pluginsToUnload = new ArrayList<>(resolvedPlugins);
++        Collections.reverse(pluginsToUnload);
++        for (PluginWrapper pluginWrapper : pluginsToUnload) {
+             unloadPlugin(pluginWrapper.getPluginId());
+         }
+     }
+@@ -293,13 +295,10 @@ public abstract class AbstractPluginManager implements PluginManager {
+      * @return true if the plugin was unloaded, otherwise false
+      */
+     protected boolean unloadPlugin(String pluginId, boolean unloadDependents, boolean resolveDependencies) {
+-        if (unloadDependents) {
+-            List<String> dependents = dependencyResolver.getDependents(pluginId);
+-            while (!dependents.isEmpty()) {
+-                String dependent = dependents.remove(0);
+-                unloadPlugin(dependent, false, false);
+-                dependents.addAll(0, dependencyResolver.getDependents(dependent));
+-            }
++        List<String> dependents = dependencyResolver.getDependents(pluginId);
++        if (!dependents.isEmpty()) {
++            log.error("Plugin '{}' cannot be unloaded because it is required by other plugins: {}", pluginId, dependents);
++            return false;
+         }
+ 
+         if (!plugins.containsKey(pluginId)) {
+diff --git a/src/test/java/org/pf4j/AbstractPluginManagerTest.java b/src/test/java/org/pf4j/AbstractPluginManagerTest.java
+index c2fdf5f..1fdf45d 100755
+--- a/src/test/java/org/pf4j/AbstractPluginManagerTest.java
++++ b/src/test/java/org/pf4j/AbstractPluginManagerTest.java
+@@ -122,7 +122,7 @@ public class AbstractPluginManagerTest {
+     }
+ 
+     @Test
+-    void unloadPluginCallsResolveDependenciesOnce() {
++    void unloadPluginWithDependentsReturnsFalse() {
+         PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1", "plugin2");
+         PluginWrapper pluginWrapper2 = createPluginWrapper("plugin2");
+ 
+@@ -133,7 +133,23 @@ public class AbstractPluginManagerTest {
+         // reset the mock to not count the explicit call of resolveDependencies
+         reset(pluginManager);
+ 
+-        pluginManager.unloadPlugin("plugin2", true);
++        boolean result = pluginManager.unloadPlugin("plugin2", true);
++
++        assertEquals(false, result);
++        verify(pluginManager, never()).resolveDependencies();
++    }
++
++    @Test
++    void unloadPluginCallsResolveDependenciesOnce() {
++        PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1");
++
++        pluginManager.addPlugin(pluginWrapper1);
++        pluginManager.resolveDependencies();
++
++        // reset the mock to not count the explicit call of resolveDependencies
++        reset(pluginManager);
++
++        pluginManager.unloadPlugin("plugin1", true);
+ 
+         verify(pluginManager, times(1)).resolveDependencies();
+     }
+diff --git a/src/test/java/org/pf4j/DefaultPluginManagerTest.java b/src/test/java/org/pf4j/DefaultPluginManagerTest.java
+index 83fa8ad..e7e4173 100755
+--- a/src/test/java/org/pf4j/DefaultPluginManagerTest.java
++++ b/src/test/java/org/pf4j/DefaultPluginManagerTest.java
+@@ -396,11 +396,9 @@ class DefaultPluginManagerTest {
+         assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip1.pluginId()).getPluginState());
+ 
+         boolean deleted = pluginManager.deletePlugin(pluginZip1.pluginId());
+-        assertTrue(deleted);
+-
+-        assertEquals(0, pluginManager.getPlugins().size());
++        assertFalse(deleted);
+ 
+-        assertThrows(PluginNotFoundException.class, () -> pluginManager.stopPlugin(pluginZip2.pluginId()));
++        assertEquals(2, pluginManager.getPlugins().size());
+     }
+ 
+     @Test
+@@ -431,12 +429,9 @@ class DefaultPluginManagerTest {
+         assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip2.pluginId()).getPluginState());
+ 
+         boolean deleted = pluginManager.deletePlugin(pluginZip2.pluginId());
+-        assertTrue(deleted);
++        assertFalse(deleted);
+ 
+-        assertEquals(1, pluginManager.getPlugins().size()); // myPlugin1 should still be there, myPlugin2 and myPlugin3 should be gone
+-
+-        pluginManager.stopPlugin(pluginZip1.pluginId());
+-        assertEquals(PluginState.STOPPED, pluginManager.getPlugin(pluginZip1.pluginId()).getPluginState());
++        assertEquals(3, pluginManager.getPlugins().size()); // all plugins should still be there because delete failed
+     }
+ 
+     @Test
+diff --git a/src/test/java/org/pf4j/PluginDependencyTest.java b/src/test/java/org/pf4j/PluginDependencyTest.java
+index c875931..f27264a 100755
+--- a/src/test/java/org/pf4j/PluginDependencyTest.java
++++ b/src/test/java/org/pf4j/PluginDependencyTest.java
+@@ -140,10 +140,11 @@ public class PluginDependencyTest {
+         pluginManager.stopPlugin("plugin.a");
+         assertEquals(0, pluginManager.getStartedPlugins().size());
+ 
+-        // unload A, both A and B should be unloaded
+-        pluginManager.unloadPlugin("plugin.a");
+-        assertEquals(0, pluginManager.getResolvedPlugins().size());
+-        assertEquals(0, pluginManager.getPlugins().size());
++        // unload A, should be refused because B depends on it
++        boolean unloaded = pluginManager.unloadPlugin("plugin.a");
++        assertFalse(unloaded);
++        assertEquals(2, pluginManager.getResolvedPlugins().size());
++        assertEquals(2, pluginManager.getPlugins().size());
+     }
+ 
+ }
