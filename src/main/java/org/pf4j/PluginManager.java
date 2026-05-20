@@ -1,0 +1,243 @@
+/*
+ * Copyright (C) 2012-present the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.pf4j;
+
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * Provides the functionality for plugin management such as load,
+ * start and stop the plugins.
+ *
+ * @author Decebal Suiu
+ */
+public interface PluginManager {
+
+    /**
+     * Retrieves all plugins.
+     */
+    List<PluginWrapper> getPlugins();
+
+    /**
+     * Retrieves all plugins with this state.
+     */
+    List<PluginWrapper> getPlugins(PluginState pluginState);
+
+    /**
+     * Retrieves all resolved plugins (with resolved dependency).
+     */
+    List<PluginWrapper> getResolvedPlugins();
+
+    /**
+     * Retrieves all unresolved plugins (with unresolved dependency).
+     */
+    List<PluginWrapper> getUnresolvedPlugins();
+
+    /**
+     * Retrieves all started plugins.
+     */
+    List<PluginWrapper> getStartedPlugins();
+
+    /**
+     * Retrieves the plugin with this id, or null if the plugin does not exist.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return A PluginWrapper object for this plugin, or null if it does not exist.
+     */
+    PluginWrapper getPlugin(String pluginId);
+
+    /**
+     * Load plugins.
+     */
+    void loadPlugins();
+
+    /**
+     * Load a plugin.
+     *
+     * @param pluginPath the plugin location
+     * @return the pluginId of the installed plugin as specified in its {@linkplain PluginDescriptor metadata}
+     * @throws PluginRuntimeException if something goes wrong
+     */
+    String loadPlugin(Path pluginPath);
+
+    /**
+     * Start all active plugins.
+     */
+    void startPlugins();
+
+    /**
+     * Start the specified plugin and its dependencies.
+     * <p>
+     * If the returned state is {@link PluginState#FAILED}, you can retrieve the failure reason
+     * by calling {@link PluginWrapper#getFailedException()} on the plugin wrapper.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return the plugin state after the start operation
+     * @throws PluginRuntimeException if something goes wrong
+     * @see PluginWrapper#getFailedException()
+     */
+    PluginState startPlugin(String pluginId);
+
+    /**
+     * Stop all active plugins.
+     */
+    void stopPlugins();
+
+    /**
+     * Stop the specified plugin and its dependencies.
+     *
+     * @return the plugin state
+     * @throws PluginRuntimeException if something goes wrong
+     */
+    PluginState stopPlugin(String pluginId);
+
+    /**
+     * Unload all plugins
+     */
+    void unloadPlugins();
+
+    /**
+     * Unload a plugin.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return true if the plugin was unloaded
+     * @throws PluginRuntimeException if something goes wrong
+     */
+    boolean unloadPlugin(String pluginId);
+
+    /**
+     * Disables a plugin from being loaded.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return true if plugin is disabled
+     * @throws PluginRuntimeException if something goes wrong
+     */
+    boolean disablePlugin(String pluginId);
+
+    /**
+     * Enables a plugin that has previously been disabled.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return true if plugin is enabled
+     * @throws PluginRuntimeException if something goes wrong
+     */
+    boolean enablePlugin(String pluginId);
+
+    /**
+     * Deletes a plugin.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return true if the plugin was deleted
+     * @throws PluginRuntimeException if something goes wrong
+     */
+    boolean deletePlugin(String pluginId);
+
+    /**
+     * Retrieves the class loader for the specified plugin.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return the class loader for the plugin
+     */
+    ClassLoader getPluginClassLoader(String pluginId);
+
+    List<Class<?>> getExtensionClasses(String pluginId);
+
+    <T> List<Class<? extends T>> getExtensionClasses(Class<T> type);
+
+    <T> List<Class<? extends T>> getExtensionClasses(Class<T> type, String pluginId);
+
+    <T> List<T> getExtensions(Class<T> type);
+
+    <T> List<T> getExtensions(Class<T> type, String pluginId);
+
+    /**
+     * Retrieves the extensions for the specified plugin.
+     *
+     * @param pluginId the unique plugin identifier, specified in its metadata
+     * @return the extensions for the plugin
+     */
+    List getExtensions(String pluginId);
+
+    Set<String> getExtensionClassNames(String pluginId);
+
+    ExtensionFactory getExtensionFactory();
+
+    /**
+     * The runtime mode. Must currently be either DEVELOPMENT or DEPLOYMENT.
+     */
+    RuntimeMode getRuntimeMode();
+
+    /**
+     * Returns {@code true} if the runtime mode is {@link RuntimeMode#DEVELOPMENT}.
+     */
+    default boolean isDevelopment() {
+        return RuntimeMode.DEVELOPMENT.equals(getRuntimeMode());
+    }
+
+    /**
+     * Returns {@code true} if the runtime mode is not {@link RuntimeMode#DEVELOPMENT}.
+     */
+    default boolean isNotDevelopment() {
+        return !isDevelopment();
+    }
+
+    /**
+     * Retrieves the {@link PluginWrapper} that loaded the given class 'clazz'.
+     */
+    PluginWrapper whichPlugin(Class<?> clazz);
+
+    void addPluginStateListener(PluginStateListener listener);
+
+    void removePluginStateListener(PluginStateListener listener);
+
+    /**
+     * Set the system version.  This is used to compare against the plugin
+     * requires attribute.  The default system version is 0.0.0 which
+     * disables all version checking.
+     *
+     * @default 0.0.0
+     * @param version the system version
+     */
+    void setSystemVersion(String version);
+
+    /**
+     * Returns the system version.
+     *
+     * @return the system version
+     */
+    String getSystemVersion();
+
+    /**
+     * Gets the first path of the folders where plugins are installed.
+     *
+     * @deprecated Use {@link #getPluginsRoots()} instead to get all paths where plugins are could be installed.
+     *
+     * @return Path of plugins root
+     */
+    @Deprecated
+    Path getPluginsRoot();
+
+    /**
+     * Gets a read-only list of all paths of the folders where plugins are installed.
+     *
+     * @return Paths of plugins roots
+     */
+    List<Path> getPluginsRoots();
+
+    VersionManager getVersionManager();
+
+}
