@@ -122,7 +122,6 @@ public class PluginDependencyTest {
 
     @Test
     public void dependentUnload() throws Exception {
-        // B depends on A
         PluginZip pluginA = new PluginZip.Builder(pluginsPath.resolve("A-plugin-1.2.3.zip"), "plugin.a")
             .pluginVersion("1.2.3").build();
 
@@ -131,17 +130,46 @@ public class PluginDependencyTest {
             .pluginVersion("1.2.3").build();
 
         pluginManager.loadPlugins();
-        assertEquals(2, pluginManager.getPlugins().size());
-
         pluginManager.startPlugins();
-        assertEquals(2, pluginManager.getStartedPlugins().size());
 
-        // stop A, both A and B should be stopped
-        pluginManager.stopPlugin("plugin.a");
-        assertEquals(0, pluginManager.getStartedPlugins().size());
+        assertFalse(pluginManager.unloadPlugin("plugin.a"));
+        assertEquals(2, pluginManager.getResolvedPlugins().size());
+        assertEquals(2, pluginManager.getPlugins().size());
+        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.a").getPluginState());
+        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.b").getPluginState());
 
-        // unload A, both A and B should be unloaded
-        pluginManager.unloadPlugin("plugin.a");
+        assertTrue(pluginManager.unloadPlugin("plugin.b"));
+        assertEquals(1, pluginManager.getResolvedPlugins().size());
+        assertEquals(1, pluginManager.getPlugins().size());
+        assertTrue(pluginManager.unloadPlugin("plugin.a"));
+        assertEquals(0, pluginManager.getResolvedPlugins().size());
+        assertEquals(0, pluginManager.getPlugins().size());
+    }
+
+    @Test
+    public void dependentUnloadWithMultiLevelDependencies() throws Exception {
+        PluginZip pluginA = new PluginZip.Builder(pluginsPath.resolve("A-plugin-2.0.0.zip"), "plugin.a")
+            .pluginDependencies("plugin.b")
+            .pluginVersion("2.0.0").build();
+
+        PluginZip pluginB = new PluginZip.Builder(pluginsPath.resolve("B-plugin-2.0.0.zip"), "plugin.b")
+            .pluginDependencies("plugin.c")
+            .pluginVersion("2.0.0").build();
+
+        PluginZip pluginC = new PluginZip.Builder(pluginsPath.resolve("C-plugin-2.0.0.zip"), "plugin.c")
+            .pluginVersion("2.0.0").build();
+
+        pluginManager.loadPlugins();
+        pluginManager.startPlugins();
+
+        assertFalse(pluginManager.unloadPlugin("plugin.b"));
+        assertFalse(pluginManager.unloadPlugin("plugin.c"));
+        assertEquals(3, pluginManager.getResolvedPlugins().size());
+        assertEquals(3, pluginManager.getPlugins().size());
+
+        assertTrue(pluginManager.unloadPlugin("plugin.a"));
+        assertTrue(pluginManager.unloadPlugin("plugin.b"));
+        assertTrue(pluginManager.unloadPlugin("plugin.c"));
         assertEquals(0, pluginManager.getResolvedPlugins().size());
         assertEquals(0, pluginManager.getPlugins().size());
     }

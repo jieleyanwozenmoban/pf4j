@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -123,6 +124,22 @@ public class AbstractPluginManagerTest {
 
     @Test
     void unloadPluginCallsResolveDependenciesOnce() {
+        PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1");
+        PluginWrapper pluginWrapper2 = createPluginWrapper("plugin2");
+
+        pluginManager.addPlugin(pluginWrapper1);
+        pluginManager.addPlugin(pluginWrapper2);
+        pluginManager.resolveDependencies();
+
+        reset(pluginManager);
+
+        pluginManager.unloadPlugin("plugin2", true);
+
+        verify(pluginManager, times(1)).resolveDependencies();
+    }
+
+    @Test
+    void unloadPluginRejectsUnloadWhenDependentsExist() {
         PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1", "plugin2");
         PluginWrapper pluginWrapper2 = createPluginWrapper("plugin2");
 
@@ -130,12 +147,12 @@ public class AbstractPluginManagerTest {
         pluginManager.addPlugin(pluginWrapper2);
         pluginManager.resolveDependencies();
 
-        // reset the mock to not count the explicit call of resolveDependencies
         reset(pluginManager);
 
-        pluginManager.unloadPlugin("plugin2", true);
+        boolean unloaded = pluginManager.unloadPlugin("plugin2", true);
 
-        verify(pluginManager, times(1)).resolveDependencies();
+        assertFalse(unloaded);
+        verify(pluginManager, never()).resolveDependencies();
     }
 
     @Test

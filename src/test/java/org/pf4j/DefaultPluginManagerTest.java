@@ -19,13 +19,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.function.Executable;
 import org.pf4j.test.JavaFileObjectUtils;
 import org.pf4j.test.JavaSources;
 import org.pf4j.test.PluginJar;
 import org.pf4j.test.PluginZip;
 
 import javax.tools.JavaFileObject;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -472,6 +475,28 @@ class DefaultPluginManagerTest {
     }
 
     @Test
+    void unloadPluginWithDependentsIsRejectedAndLogsReason() throws Exception {
+        PluginZip pluginA = new PluginZip.Builder(pluginsPath.resolve("plugin-a-1.0.0.zip"), "plugin.a")
+            .pluginDependencies("plugin.b")
+            .pluginVersion("1.0.0")
+            .build();
+
+        PluginZip pluginB = new PluginZip.Builder(pluginsPath.resolve("plugin-b-1.0.0.zip"), "plugin.b")
+            .pluginVersion("1.0.0")
+            .build();
+
+        pluginManager.loadPlugins();
+        pluginManager.startPlugins();
+
+        String loggedOutput = captureStandardError(() -> assertFalse(pluginManager.unloadPlugin("plugin.b")));
+
+        assertEquals(2, pluginManager.getPlugins().size());
+        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.a").getPluginState());
+        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.b").getPluginState());
+        assertTrue(loggedOutput.contains("Cannot unload plugin 'plugin.b@1.0.0' because it is required by plugin(s): [plugin.a]"));
+    }
+
+    @Test
     void startPluginWithExceptionSetsStateToFailed() throws IOException {
         PluginZip pluginZip = new PluginZip.Builder(pluginsPath.resolve("failing-plugin-1.0.0.zip"), "failingPlugin")
             .pluginVersion("1.0.0")
@@ -837,6 +862,26 @@ class DefaultPluginManagerTest {
         // Should preserve the existing exception, not overwrite it
         assertSame(existingException, plugin.getFailedException());
         assertEquals("Existing error", plugin.getFailedException().getMessage());
+    }
+
+    private String captureStandardError(Executable executable) throws Exception {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintStream originalError = System.err;
+        try (PrintStream printStream = new PrintStream(outputStream, true)) {
+            System.setErr(printStream);
+            try {
+                executable.execute();
+            } catch (Throwable throwable) {
+                if (throwable instanceof Exception) {
+                    throw (Exception) throwable;
+                }
+                throw (Error) throwable;
+            }
+        } finally {
+            System.setErr(originalError);
+        }
+
+        return outputStream.toString("UTF-8");
     }
 
 }

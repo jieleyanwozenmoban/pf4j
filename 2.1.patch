@@ -1,0 +1,243 @@
+diff --git a/src/main/java/org/pf4j/AbstractPluginManager.java b/src/main/java/org/pf4j/AbstractPluginManager.java
+index 29f26c5..e319c90 100755
+--- a/src/main/java/org/pf4j/AbstractPluginManager.java
++++ b/src/main/java/org/pf4j/AbstractPluginManager.java
+@@ -293,21 +293,18 @@ public abstract class AbstractPluginManager implements PluginManager {
+      * @return true if the plugin was unloaded, otherwise false
+      */
+     protected boolean unloadPlugin(String pluginId, boolean unloadDependents, boolean resolveDependencies) {
+-        if (unloadDependents) {
+-            List<String> dependents = dependencyResolver.getDependents(pluginId);
+-            while (!dependents.isEmpty()) {
+-                String dependent = dependents.remove(0);
+-                unloadPlugin(dependent, false, false);
+-                dependents.addAll(0, dependencyResolver.getDependents(dependent));
+-            }
+-        }
+-
+         if (!plugins.containsKey(pluginId)) {
+-            // nothing to do
+             return false;
+         }
+ 
+         PluginWrapper pluginWrapper = getPlugin(pluginId);
++        if (unloadDependents) {
++            List<String> dependents = getPluginDependents(pluginId);
++            if (!dependents.isEmpty()) {
++                log.warn("Cannot unload plugin '{}' because it is required by plugin(s): {}", getPluginLabel(pluginWrapper.getDescriptor()), dependents);
++                return false;
++            }
++        }
+         PluginState pluginState;
+         try {
+             pluginState = stopPlugin(pluginId, false);
+@@ -1124,6 +1121,17 @@ public abstract class AbstractPluginManager implements PluginManager {
+         return getPluginLabel(getPlugin(pluginId).getDescriptor());
+     }
+ 
++    protected List<String> getPluginDependents(String pluginId) {
++        return plugins.values().stream()
++            .map(PluginWrapper::getDescriptor)
++            .filter(descriptor -> !pluginId.equals(descriptor.getPluginId()))
++            .filter(descriptor -> descriptor.getDependencies().stream()
++                .anyMatch(dependency -> !dependency.isOptional() && pluginId.equals(dependency.getPluginId())))
++            .map(PluginDescriptor::getPluginId)
++            .sorted()
++            .collect(Collectors.toList());
++    }
++
+     @SuppressWarnings("unchecked")
+     protected <T> List<Class<? extends T>> getExtensionClasses(List<ExtensionWrapper<T>> extensionsWrapper) {
+         List<Class<? extends T>> extensionClasses = new ArrayList<>(extensionsWrapper.size());
+diff --git a/src/test/java/org/pf4j/AbstractPluginManagerTest.java b/src/test/java/org/pf4j/AbstractPluginManagerTest.java
+index c2fdf5f..4c12e58 100755
+--- a/src/test/java/org/pf4j/AbstractPluginManagerTest.java
++++ b/src/test/java/org/pf4j/AbstractPluginManagerTest.java
+@@ -28,6 +28,7 @@ import java.util.Arrays;
+ import java.util.List;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertNotEquals;
+ import static org.junit.jupiter.api.Assertions.assertSame;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
+@@ -123,14 +124,13 @@ public class AbstractPluginManagerTest {
+ 
+     @Test
+     void unloadPluginCallsResolveDependenciesOnce() {
+-        PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1", "plugin2");
++        PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1");
+         PluginWrapper pluginWrapper2 = createPluginWrapper("plugin2");
+ 
+         pluginManager.addPlugin(pluginWrapper1);
+         pluginManager.addPlugin(pluginWrapper2);
+         pluginManager.resolveDependencies();
+ 
+-        // reset the mock to not count the explicit call of resolveDependencies
+         reset(pluginManager);
+ 
+         pluginManager.unloadPlugin("plugin2", true);
+@@ -138,6 +138,23 @@ public class AbstractPluginManagerTest {
+         verify(pluginManager, times(1)).resolveDependencies();
+     }
+ 
++    @Test
++    void unloadPluginRejectsUnloadWhenDependentsExist() {
++        PluginWrapper pluginWrapper1 = createPluginWrapper("plugin1", "plugin2");
++        PluginWrapper pluginWrapper2 = createPluginWrapper("plugin2");
++
++        pluginManager.addPlugin(pluginWrapper1);
++        pluginManager.addPlugin(pluginWrapper2);
++        pluginManager.resolveDependencies();
++
++        reset(pluginManager);
++
++        boolean unloaded = pluginManager.unloadPlugin("plugin2", true);
++
++        assertFalse(unloaded);
++        verify(pluginManager, never()).resolveDependencies();
++    }
++
+     @Test
+     void stopPluginFirePluginStateListeners() {
+         PluginStateListener pluginStateListener = mock(PluginStateListener.class);
+diff --git a/src/test/java/org/pf4j/DefaultPluginManagerTest.java b/src/test/java/org/pf4j/DefaultPluginManagerTest.java
+index 83fa8ad..5df5e45 100755
+--- a/src/test/java/org/pf4j/DefaultPluginManagerTest.java
++++ b/src/test/java/org/pf4j/DefaultPluginManagerTest.java
+@@ -19,13 +19,16 @@ import org.junit.jupiter.api.AfterEach;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.Test;
+ import org.junit.jupiter.api.io.TempDir;
++import org.junit.jupiter.api.function.Executable;
+ import org.pf4j.test.JavaFileObjectUtils;
+ import org.pf4j.test.JavaSources;
+ import org.pf4j.test.PluginJar;
+ import org.pf4j.test.PluginZip;
+ 
+ import javax.tools.JavaFileObject;
++import java.io.ByteArrayOutputStream;
+ import java.io.IOException;
++import java.io.PrintStream;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.nio.file.Paths;
+@@ -471,6 +474,28 @@ class DefaultPluginManagerTest {
+         assertTrue(pluginClassLoader.isClosed());
+     }
+ 
++    @Test
++    void unloadPluginWithDependentsIsRejectedAndLogsReason() throws Exception {
++        PluginZip pluginA = new PluginZip.Builder(pluginsPath.resolve("plugin-a-1.0.0.zip"), "plugin.a")
++            .pluginDependencies("plugin.b")
++            .pluginVersion("1.0.0")
++            .build();
++
++        PluginZip pluginB = new PluginZip.Builder(pluginsPath.resolve("plugin-b-1.0.0.zip"), "plugin.b")
++            .pluginVersion("1.0.0")
++            .build();
++
++        pluginManager.loadPlugins();
++        pluginManager.startPlugins();
++
++        String loggedOutput = captureStandardError(() -> assertFalse(pluginManager.unloadPlugin("plugin.b")));
++
++        assertEquals(2, pluginManager.getPlugins().size());
++        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.a").getPluginState());
++        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.b").getPluginState());
++        assertTrue(loggedOutput.contains("Cannot unload plugin 'plugin.b@1.0.0' because it is required by plugin(s): [plugin.a]"));
++    }
++
+     @Test
+     void startPluginWithExceptionSetsStateToFailed() throws IOException {
+         PluginZip pluginZip = new PluginZip.Builder(pluginsPath.resolve("failing-plugin-1.0.0.zip"), "failingPlugin")
+@@ -839,4 +864,24 @@ class DefaultPluginManagerTest {
+         assertEquals("Existing error", plugin.getFailedException().getMessage());
+     }
+ 
++    private String captureStandardError(Executable executable) throws Exception {
++        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
++        PrintStream originalError = System.err;
++        try (PrintStream printStream = new PrintStream(outputStream, true)) {
++            System.setErr(printStream);
++            try {
++                executable.execute();
++            } catch (Throwable throwable) {
++                if (throwable instanceof Exception) {
++                    throw (Exception) throwable;
++                }
++                throw (Error) throwable;
++            }
++        } finally {
++            System.setErr(originalError);
++        }
++
++        return outputStream.toString("UTF-8");
++    }
++
+ }
+diff --git a/src/test/java/org/pf4j/PluginDependencyTest.java b/src/test/java/org/pf4j/PluginDependencyTest.java
+index c875931..86fff26 100755
+--- a/src/test/java/org/pf4j/PluginDependencyTest.java
++++ b/src/test/java/org/pf4j/PluginDependencyTest.java
+@@ -122,7 +122,6 @@ public class PluginDependencyTest {
+ 
+     @Test
+     public void dependentUnload() throws Exception {
+-        // B depends on A
+         PluginZip pluginA = new PluginZip.Builder(pluginsPath.resolve("A-plugin-1.2.3.zip"), "plugin.a")
+             .pluginVersion("1.2.3").build();
+ 
+@@ -131,17 +130,46 @@ public class PluginDependencyTest {
+             .pluginVersion("1.2.3").build();
+ 
+         pluginManager.loadPlugins();
++        pluginManager.startPlugins();
++
++        assertFalse(pluginManager.unloadPlugin("plugin.a"));
++        assertEquals(2, pluginManager.getResolvedPlugins().size());
+         assertEquals(2, pluginManager.getPlugins().size());
++        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.a").getPluginState());
++        assertEquals(PluginState.STARTED, pluginManager.getPlugin("plugin.b").getPluginState());
++
++        assertTrue(pluginManager.unloadPlugin("plugin.b"));
++        assertEquals(1, pluginManager.getResolvedPlugins().size());
++        assertEquals(1, pluginManager.getPlugins().size());
++        assertTrue(pluginManager.unloadPlugin("plugin.a"));
++        assertEquals(0, pluginManager.getResolvedPlugins().size());
++        assertEquals(0, pluginManager.getPlugins().size());
++    }
++
++    @Test
++    public void dependentUnloadWithMultiLevelDependencies() throws Exception {
++        PluginZip pluginA = new PluginZip.Builder(pluginsPath.resolve("A-plugin-2.0.0.zip"), "plugin.a")
++            .pluginDependencies("plugin.b")
++            .pluginVersion("2.0.0").build();
++
++        PluginZip pluginB = new PluginZip.Builder(pluginsPath.resolve("B-plugin-2.0.0.zip"), "plugin.b")
++            .pluginDependencies("plugin.c")
++            .pluginVersion("2.0.0").build();
+ 
++        PluginZip pluginC = new PluginZip.Builder(pluginsPath.resolve("C-plugin-2.0.0.zip"), "plugin.c")
++            .pluginVersion("2.0.0").build();
++
++        pluginManager.loadPlugins();
+         pluginManager.startPlugins();
+-        assertEquals(2, pluginManager.getStartedPlugins().size());
+ 
+-        // stop A, both A and B should be stopped
+-        pluginManager.stopPlugin("plugin.a");
+-        assertEquals(0, pluginManager.getStartedPlugins().size());
++        assertFalse(pluginManager.unloadPlugin("plugin.b"));
++        assertFalse(pluginManager.unloadPlugin("plugin.c"));
++        assertEquals(3, pluginManager.getResolvedPlugins().size());
++        assertEquals(3, pluginManager.getPlugins().size());
+ 
+-        // unload A, both A and B should be unloaded
+-        pluginManager.unloadPlugin("plugin.a");
++        assertTrue(pluginManager.unloadPlugin("plugin.a"));
++        assertTrue(pluginManager.unloadPlugin("plugin.b"));
++        assertTrue(pluginManager.unloadPlugin("plugin.c"));
+         assertEquals(0, pluginManager.getResolvedPlugins().size());
+         assertEquals(0, pluginManager.getPlugins().size());
+     }

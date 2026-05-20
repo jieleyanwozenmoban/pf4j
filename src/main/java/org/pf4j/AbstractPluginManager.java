@@ -293,21 +293,18 @@ public abstract class AbstractPluginManager implements PluginManager {
      * @return true if the plugin was unloaded, otherwise false
      */
     protected boolean unloadPlugin(String pluginId, boolean unloadDependents, boolean resolveDependencies) {
-        if (unloadDependents) {
-            List<String> dependents = dependencyResolver.getDependents(pluginId);
-            while (!dependents.isEmpty()) {
-                String dependent = dependents.remove(0);
-                unloadPlugin(dependent, false, false);
-                dependents.addAll(0, dependencyResolver.getDependents(dependent));
-            }
-        }
-
         if (!plugins.containsKey(pluginId)) {
-            // nothing to do
             return false;
         }
 
         PluginWrapper pluginWrapper = getPlugin(pluginId);
+        if (unloadDependents) {
+            List<String> dependents = getPluginDependents(pluginId);
+            if (!dependents.isEmpty()) {
+                log.warn("Cannot unload plugin '{}' because it is required by plugin(s): {}", getPluginLabel(pluginWrapper.getDescriptor()), dependents);
+                return false;
+            }
+        }
         PluginState pluginState;
         try {
             pluginState = stopPlugin(pluginId, false);
@@ -1122,6 +1119,17 @@ public abstract class AbstractPluginManager implements PluginManager {
      */
     protected String getPluginLabel(String pluginId) {
         return getPluginLabel(getPlugin(pluginId).getDescriptor());
+    }
+
+    protected List<String> getPluginDependents(String pluginId) {
+        return plugins.values().stream()
+            .map(PluginWrapper::getDescriptor)
+            .filter(descriptor -> !pluginId.equals(descriptor.getPluginId()))
+            .filter(descriptor -> descriptor.getDependencies().stream()
+                .anyMatch(dependency -> !dependency.isOptional() && pluginId.equals(dependency.getPluginId())))
+            .map(PluginDescriptor::getPluginId)
+            .sorted()
+            .collect(Collectors.toList());
     }
 
     @SuppressWarnings("unchecked")
