@@ -110,6 +110,7 @@ public abstract class AbstractPluginManager implements PluginManager {
 
     protected VersionManager versionManager;
     protected ResolveRecoveryStrategy resolveRecoveryStrategy;
+    protected boolean autoUnloadDependents = true;
 
     /**
      * The plugins roots are supplied as comma-separated list by {@code System.getProperty("pf4j.pluginsDir", "plugins")}.
@@ -270,7 +271,18 @@ public abstract class AbstractPluginManager implements PluginManager {
      */
     @Override
     public boolean unloadPlugin(String pluginId) {
-        return unloadPlugin(pluginId, true);
+        return unloadPlugin(pluginId, autoUnloadDependents);
+    }
+
+    /**
+     * Unload the specified plugin safely, checking for dependents first.
+     * If the plugin has dependents, it will not be unloaded.
+     *
+     * @param pluginId the pluginId of the plugin to unload
+     * @return true if the plugin was unloaded, otherwise false
+     */
+    public boolean unloadPluginSafely(String pluginId) {
+        return unloadPlugin(pluginId, false);
     }
 
     /**
@@ -285,6 +297,25 @@ public abstract class AbstractPluginManager implements PluginManager {
     }
 
     /**
+     * Sets whether to automatically unload dependent plugins when unloading a plugin.
+     * Default is true.
+     *
+     * @param autoUnloadDependents true to automatically unload dependents
+     */
+    public void setAutoUnloadDependents(boolean autoUnloadDependents) {
+        this.autoUnloadDependents = autoUnloadDependents;
+    }
+
+    /**
+     * Returns whether to automatically unload dependent plugins when unloading a plugin.
+     *
+     * @return true if automatically unload dependents
+     */
+    public boolean isAutoUnloadDependents() {
+        return autoUnloadDependents;
+    }
+
+    /**
      * Unload the specified plugin and it's dependents.
      *
      * @param pluginId the pluginId of the plugin to unload
@@ -293,8 +324,17 @@ public abstract class AbstractPluginManager implements PluginManager {
      * @return true if the plugin was unloaded, otherwise false
      */
     protected boolean unloadPlugin(String pluginId, boolean unloadDependents, boolean resolveDependencies) {
+        // 先检查是否有其他插件依赖当前插件
+        List<String> dependents = dependencyResolver.getDependents(pluginId);
+        
+        // 如果有依赖且不是主动卸载依赖模式，则拒绝卸载
+        if (!dependents.isEmpty() && !unloadDependents) {
+            log.error("Cannot unload plugin '{}' because it is depended on by the following plugins: {}",
+                getPluginLabel(pluginId), dependents);
+            return false;
+        }
+
         if (unloadDependents) {
-            List<String> dependents = dependencyResolver.getDependents(pluginId);
             while (!dependents.isEmpty()) {
                 String dependent = dependents.remove(0);
                 unloadPlugin(dependent, false, false);
@@ -909,6 +949,16 @@ public abstract class AbstractPluginManager implements PluginManager {
      */
     protected boolean isPluginDisabled(String pluginId) {
         return pluginStatusProvider.isPluginDisabled(pluginId);
+    }
+
+    /**
+     * Get the list of plugins that depend on the specified plugin.
+     *
+     * @param pluginId the pluginId to check
+     * @return list of pluginIds that depend on the specified plugin
+     */
+    public List<String> getDependents(String pluginId) {
+        return dependencyResolver.getDependents(pluginId);
     }
 
     /**
