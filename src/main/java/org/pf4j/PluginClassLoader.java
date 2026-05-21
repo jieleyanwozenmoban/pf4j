@@ -121,6 +121,17 @@ public class PluginClassLoader extends URLClassLoader {
      */
     @Override
     public Class<?> loadClass(String className) throws ClassNotFoundException {
+        return loadClass(className, true);
+    }
+
+    /**
+     * Loads the class with the specified name, optionally skipping the application (parent) class loader.
+     *
+     * @param className the name of the class
+     * @param checkApplication whether to check the application (parent) class loader
+     * @return the loaded class
+     */
+    protected Class<?> loadClass(String className, boolean checkApplication) throws ClassNotFoundException {
         synchronized (getClassLoadingLock(className)) {
             // first check whether it's a system class, delegate to the system loader
             if (className.startsWith(JAVA_PACKAGE_PREFIX)) {
@@ -143,6 +154,9 @@ public class PluginClassLoader extends URLClassLoader {
             }
 
             for (ClassLoadingStrategy.Source classLoadingSource : classLoadingStrategy.getSources()) {
+                if (classLoadingSource == ClassLoadingStrategy.Source.APPLICATION && !checkApplication) {
+                    continue;
+                }
                 Class<?> c = null;
                 try {
                     switch (classLoadingSource) {
@@ -296,6 +310,9 @@ public class PluginClassLoader extends URLClassLoader {
             }
 
             try {
+                if (classLoader instanceof PluginClassLoader) {
+                    return ((PluginClassLoader) classLoader).loadClass(className, false);
+                }
                 return classLoader.loadClass(className);
             } catch (ClassNotFoundException e) {
                 // try next dependency

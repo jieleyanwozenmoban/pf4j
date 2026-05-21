@@ -1,0 +1,142 @@
+diff --git a/src/main/java/org/pf4j/PluginClassLoader.java b/src/main/java/org/pf4j/PluginClassLoader.java
+index af39ef1..bff47b4 100755
+--- a/src/main/java/org/pf4j/PluginClassLoader.java
++++ b/src/main/java/org/pf4j/PluginClassLoader.java
+@@ -121,6 +121,17 @@ public class PluginClassLoader extends URLClassLoader {
+      */
+     @Override
+     public Class<?> loadClass(String className) throws ClassNotFoundException {
++        return loadClass(className, true);
++    }
++
++    /**
++     * Loads the class with the specified name, optionally skipping the application (parent) class loader.
++     *
++     * @param className the name of the class
++     * @param checkApplication whether to check the application (parent) class loader
++     * @return the loaded class
++     */
++    protected Class<?> loadClass(String className, boolean checkApplication) throws ClassNotFoundException {
+         synchronized (getClassLoadingLock(className)) {
+             // first check whether it's a system class, delegate to the system loader
+             if (className.startsWith(JAVA_PACKAGE_PREFIX)) {
+@@ -143,6 +154,9 @@ public class PluginClassLoader extends URLClassLoader {
+             }
+ 
+             for (ClassLoadingStrategy.Source classLoadingSource : classLoadingStrategy.getSources()) {
++                if (classLoadingSource == ClassLoadingStrategy.Source.APPLICATION && !checkApplication) {
++                    continue;
++                }
+                 Class<?> c = null;
+                 try {
+                     switch (classLoadingSource) {
+@@ -296,6 +310,9 @@ public class PluginClassLoader extends URLClassLoader {
+             }
+ 
+             try {
++                if (classLoader instanceof PluginClassLoader) {
++                    return ((PluginClassLoader) classLoader).loadClass(className, false);
++                }
+                 return classLoader.loadClass(className);
+             } catch (ClassNotFoundException e) {
+                 // try next dependency
+diff --git a/src/test/java/org/pf4j/PluginClassLoaderTest.java b/src/test/java/org/pf4j/PluginClassLoaderTest.java
+index 0731df5..34606ac 100755
+--- a/src/test/java/org/pf4j/PluginClassLoaderTest.java
++++ b/src/test/java/org/pf4j/PluginClassLoaderTest.java
+@@ -111,7 +111,12 @@ class PluginClassLoaderTest {
+             .setProvider("Me")
+             .setRequires("5.0.0");
+ 
+-        Map<String, JavaFileObject> generatedClasses = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING)
++        Map<String, JavaFileObject> generatedClasses = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING, JavaSources.CONFLICT_DEPENDENCY)
++            .stream()
++            .map(javaFileObject -> new AbstractMap.SimpleEntry<>(JavaFileObjectUtils.getClassName(javaFileObject), javaFileObject))
++            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
++            
++        Map<String, JavaFileObject> pluginGeneratedClasses = JavaSources.compileAll(JavaSources.CONFLICT_PLUGIN)
+             .stream()
+             .map(javaFileObject -> new AbstractMap.SimpleEntry<>(JavaFileObjectUtils.getClassName(javaFileObject), javaFileObject))
+             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+@@ -121,6 +126,7 @@ class PluginClassLoaderTest {
+ 
+         Path greetingClassPath = classesPath.resolve(JavaSources.GREETING_CLASS_NAME.replace('.', '/') + ".class");
+         Path whaszzupGreetingClassPath = classesPath.resolve(JavaSources.WHAZZUP_GREETING_CLASS_NAME.replace('.', '/') + ".class");
++        Path conflictClassPath = classesPath.resolve(JavaSources.CONFLICT_CLASS_NAME.replace('.', '/') + ".class");
+ 
+         Path pluginDependencyPath = pluginsPath.resolve(pluginDependencyDescriptor.getPluginId() + "-" + pluginDependencyDescriptor.getVersion() + ".zip");
+         pluginDependencyZip = new PluginZip.Builder(pluginDependencyPath, pluginDependencyDescriptor.getPluginId())
+@@ -131,6 +137,7 @@ class PluginClassLoaderTest {
+                 .addFile(classesPath.resolve(LegacyExtensionStorage.EXTENSIONS_RESOURCE), "dependency")
+                 .addFile(greetingClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.GREETING_CLASS_NAME)))
+                 .addFile(whaszzupGreetingClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.WHAZZUP_GREETING_CLASS_NAME)))
++                .addFile(conflictClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.CONFLICT_CLASS_NAME)))
+                 .build();
+ 
+         pluginDependencyZip.unzip();
+@@ -173,6 +180,7 @@ class PluginClassLoaderTest {
+                 .addFile(metaInfPath.resolve("file-in-both-parent-and-dependency-and-plugin"), "plugin")
+                 .addFile(metaInfPath.resolve("file-in-both-parent-and-plugin"), "plugin")
+                 .addFile(classesPath.resolve(LegacyExtensionStorage.EXTENSIONS_RESOURCE), "plugin")
++                .addFile(conflictClassPath, JavaFileObjectUtils.getAllBytes(pluginGeneratedClasses.get(JavaSources.CONFLICT_CLASS_NAME)))
+                 .build();
+ 
+         pluginZip.unzip();
+@@ -285,6 +293,27 @@ class PluginClassLoaderTest {
+         assertFalse(parentLastPluginClassLoader.getResources("META-INF/non-existing-file").hasMoreElements());
+     }
+ 
++    @Test
++    void parentLastGetClassExistsInParentAndDependencyAndPlugin() throws Exception {
++        Class<?> clazz = parentLastPluginClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
++        assertEquals("PLUGIN", clazz.getMethod("getVersion").invoke(null));
++    }
++
++    @Test
++    void parentFirstGetClassExistsInParentAndDependencyAndPlugin() throws Exception {
++        Class<?> clazz = parentFirstPluginClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
++        assertEquals("HOST", clazz.getMethod("getVersion").invoke(null));
++    }
++
++    @Test
++    void parentLastDependencyClassDoesNotBleedHostClass() throws Exception {
++        // If current plugin asks for a class that exists in host and dependency,
++        // it should get the dependency version, not the host version.
++        // In our setup, parentLastPluginDependencyClassLoader is the dependency.
++        Class<?> clazz = parentLastPluginDependencyClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
++        assertEquals("DEPENDENCY", clazz.getMethod("getVersion").invoke(null));
++    }
++
+     @Test
+     void parentFirstGetResourcesNonExisting() throws IOException {
+         assertFalse(parentFirstPluginClassLoader.getResources("META-INF/non-existing-file").hasMoreElements());
+diff --git a/src/test/java/org/pf4j/test/JavaSources.java b/src/test/java/org/pf4j/test/JavaSources.java
+index 8ebce18..4fbe869 100755
+--- a/src/test/java/org/pf4j/test/JavaSources.java
++++ b/src/test/java/org/pf4j/test/JavaSources.java
+@@ -52,6 +52,25 @@ public class JavaSources {
+         "    }",
+         "}");
+ 
++    public static final String CONFLICT_CLASS_NAME = "org.pf4j.test.ConflictClass";
++    public static final JavaFileObject CONFLICT_DEPENDENCY = JavaFileObjects.forSourceLines("ConflictClass",
++        "package org.pf4j.test;",
++        "",
++        "public class ConflictClass {",
++        "    public static String getVersion() {",
++        "       return \"DEPENDENCY\";",
++        "    }",
++        "}");
++        
++    public static final JavaFileObject CONFLICT_PLUGIN = JavaFileObjects.forSourceLines("ConflictClass",
++        "package org.pf4j.test;",
++        "",
++        "public class ConflictClass {",
++        "    public static String getVersion() {",
++        "       return \"PLUGIN\";",
++        "    }",
++        "}");
++
+     /**
+      * Compile a list of sources using javac compiler.
+      */

@@ -52,6 +52,25 @@ public class JavaSources {
         "    }",
         "}");
 
+    public static final String CONFLICT_CLASS_NAME = "org.pf4j.test.ConflictClass";
+    public static final JavaFileObject CONFLICT_DEPENDENCY = JavaFileObjects.forSourceLines("ConflictClass",
+        "package org.pf4j.test;",
+        "",
+        "public class ConflictClass {",
+        "    public static String getVersion() {",
+        "       return \"DEPENDENCY\";",
+        "    }",
+        "}");
+        
+    public static final JavaFileObject CONFLICT_PLUGIN = JavaFileObjects.forSourceLines("ConflictClass",
+        "package org.pf4j.test;",
+        "",
+        "public class ConflictClass {",
+        "    public static String getVersion() {",
+        "       return \"PLUGIN\";",
+        "    }",
+        "}");
+
     /**
      * Compile a list of sources using javac compiler.
      */

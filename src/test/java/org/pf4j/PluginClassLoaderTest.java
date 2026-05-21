@@ -111,7 +111,12 @@ class PluginClassLoaderTest {
             .setProvider("Me")
             .setRequires("5.0.0");
 
-        Map<String, JavaFileObject> generatedClasses = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING)
+        Map<String, JavaFileObject> generatedClasses = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING, JavaSources.CONFLICT_DEPENDENCY)
+            .stream()
+            .map(javaFileObject -> new AbstractMap.SimpleEntry<>(JavaFileObjectUtils.getClassName(javaFileObject), javaFileObject))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            
+        Map<String, JavaFileObject> pluginGeneratedClasses = JavaSources.compileAll(JavaSources.CONFLICT_PLUGIN)
             .stream()
             .map(javaFileObject -> new AbstractMap.SimpleEntry<>(JavaFileObjectUtils.getClassName(javaFileObject), javaFileObject))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
@@ -121,6 +126,7 @@ class PluginClassLoaderTest {
 
         Path greetingClassPath = classesPath.resolve(JavaSources.GREETING_CLASS_NAME.replace('.', '/') + ".class");
         Path whaszzupGreetingClassPath = classesPath.resolve(JavaSources.WHAZZUP_GREETING_CLASS_NAME.replace('.', '/') + ".class");
+        Path conflictClassPath = classesPath.resolve(JavaSources.CONFLICT_CLASS_NAME.replace('.', '/') + ".class");
 
         Path pluginDependencyPath = pluginsPath.resolve(pluginDependencyDescriptor.getPluginId() + "-" + pluginDependencyDescriptor.getVersion() + ".zip");
         pluginDependencyZip = new PluginZip.Builder(pluginDependencyPath, pluginDependencyDescriptor.getPluginId())
@@ -131,6 +137,7 @@ class PluginClassLoaderTest {
                 .addFile(classesPath.resolve(LegacyExtensionStorage.EXTENSIONS_RESOURCE), "dependency")
                 .addFile(greetingClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.GREETING_CLASS_NAME)))
                 .addFile(whaszzupGreetingClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.WHAZZUP_GREETING_CLASS_NAME)))
+                .addFile(conflictClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.CONFLICT_CLASS_NAME)))
                 .build();
 
         pluginDependencyZip.unzip();
@@ -173,6 +180,7 @@ class PluginClassLoaderTest {
                 .addFile(metaInfPath.resolve("file-in-both-parent-and-dependency-and-plugin"), "plugin")
                 .addFile(metaInfPath.resolve("file-in-both-parent-and-plugin"), "plugin")
                 .addFile(classesPath.resolve(LegacyExtensionStorage.EXTENSIONS_RESOURCE), "plugin")
+                .addFile(conflictClassPath, JavaFileObjectUtils.getAllBytes(pluginGeneratedClasses.get(JavaSources.CONFLICT_CLASS_NAME)))
                 .build();
 
         pluginZip.unzip();
@@ -283,6 +291,27 @@ class PluginClassLoaderTest {
     @Test
     void parentLastGetResourcesNonExisting() throws IOException {
         assertFalse(parentLastPluginClassLoader.getResources("META-INF/non-existing-file").hasMoreElements());
+    }
+
+    @Test
+    void parentLastGetClassExistsInParentAndDependencyAndPlugin() throws Exception {
+        Class<?> clazz = parentLastPluginClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
+        assertEquals("PLUGIN", clazz.getMethod("getVersion").invoke(null));
+    }
+
+    @Test
+    void parentFirstGetClassExistsInParentAndDependencyAndPlugin() throws Exception {
+        Class<?> clazz = parentFirstPluginClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
+        assertEquals("HOST", clazz.getMethod("getVersion").invoke(null));
+    }
+
+    @Test
+    void parentLastDependencyClassDoesNotBleedHostClass() throws Exception {
+        // If current plugin asks for a class that exists in host and dependency,
+        // it should get the dependency version, not the host version.
+        // In our setup, parentLastPluginDependencyClassLoader is the dependency.
+        Class<?> clazz = parentLastPluginDependencyClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
+        assertEquals("DEPENDENCY", clazz.getMethod("getVersion").invoke(null));
     }
 
     @Test
