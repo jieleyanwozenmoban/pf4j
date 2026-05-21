@@ -1,0 +1,328 @@
+diff --git a/4.4.patch b/4.4.patch
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/src/main/java/org/pf4j/AbstractExtensionFinder.java b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+index 69c65f8..b924211 100755
+--- a/src/main/java/org/pf4j/AbstractExtensionFinder.java
++++ b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+@@ -51,22 +51,14 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+ 
+     @Override
+     public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
+-        return find(type, (ExtensionFilter) null);
+-    }
+-
+-    @Override
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+-        log.debug("Finding extensions of extension point '{}' with filter", type.getName());
++        log.debug("Finding extensions of extension point '{}'", type.getName());
+         Map<String, Set<String>> entries = getEntries();
+         List<ExtensionWrapper<T>> result = new ArrayList<>();
+ 
+         // add extensions found in classpath and plugins
+         for (String pluginId : entries.keySet()) {
+-            if (filter != null && filter.getPluginId() != null && !filter.getPluginId().equals(pluginId)) {
+-                continue;
+-            }
+             // classpath's extensions <=> pluginId = null
+-            List<ExtensionWrapper<T>> pluginExtensions = find(type, pluginId, filter);
++            List<ExtensionWrapper<T>> pluginExtensions = find(type, pluginId);
+             result.addAll(pluginExtensions);
+         }
+ 
+@@ -85,12 +77,6 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+     @Override
+     @SuppressWarnings("unchecked")
+     public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
+-        return find(type, pluginId, null);
+-    }
+-
+-    @Override
+-    @SuppressWarnings("unchecked")
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter) {
+         log.debug("Finding extensions of extension point '{}' for plugin '{}'", type.getName(), pluginId);
+         List<ExtensionWrapper<T>> result = new ArrayList<>();
+ 
+@@ -114,9 +100,6 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+         ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+ 
+         for (String className : classNames) {
+-            if (filter != null && filter.getExtensionClassName() != null && !filter.getExtensionClassName().equals(className)) {
+-                continue;
+-            }
+             try {
+                 if (isCheckForExtensionDependencies()) {
+                     // Load extension annotation without initializing the class itself.
+@@ -156,10 +139,6 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+                 log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
+                 Class<?> extensionClass = classLoader.loadClass(className);
+ 
+-                if (filter != null && filter.getExtensionType() != null && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
+-                    continue;
+-                }
+-
+                 log.debug("Checking extension type '{}'", className);
+                 if (type.isAssignableFrom(extensionClass)) {
+                     ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
+@@ -190,18 +169,9 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+ 
+     @Override
+     public List<ExtensionWrapper> find(String pluginId) {
+-        return find(pluginId, null);
+-    }
+-
+-    @Override
+-    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
+         log.debug("Finding extensions from plugin '{}'", pluginId);
+         List<ExtensionWrapper> result = new ArrayList<>();
+ 
+-        if (filter != null && filter.getPluginId() != null && !filter.getPluginId().equals(pluginId)) {
+-            return result;
+-        }
+-
+         Set<String> classNames = findClassNames(pluginId);
+         if (classNames.isEmpty()) {
+             return result;
+@@ -221,17 +191,10 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+         ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+ 
+         for (String className : classNames) {
+-            if (filter != null && filter.getExtensionClassName() != null && !filter.getExtensionClassName().equals(className)) {
+-                continue;
+-            }
+             try {
+                 log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
+                 Class<?> extensionClass = classLoader.loadClass(className);
+ 
+-                if (filter != null && filter.getExtensionType() != null && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
+-                    continue;
+-                }
+-
+                 ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
+                 result.add(extensionWrapper);
+                 log.debug("Added extension '{}' with ordinal {}", className, extensionWrapper.getOrdinal());
+diff --git a/src/main/java/org/pf4j/DefaultExtensionFinder.java b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+index 8564e09..1a6fc6b 100755
+--- a/src/main/java/org/pf4j/DefaultExtensionFinder.java
++++ b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+@@ -40,14 +40,9 @@ public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListe
+ 
+     @Override
+     public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
+-        return find(type, (ExtensionFilter) null);
+-    }
+-
+-    @Override
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+         List<ExtensionWrapper<T>> extensions = new ArrayList<>();
+         for (ExtensionFinder finder : finders) {
+-            extensions.addAll(finder.find(type, filter));
++            extensions.addAll(finder.find(type));
+         }
+ 
+         return extensions;
+@@ -55,14 +50,9 @@ public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListe
+ 
+     @Override
+     public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
+-        return find(type, pluginId, null);
+-    }
+-
+-    @Override
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter) {
+         List<ExtensionWrapper<T>> extensions = new ArrayList<>();
+         for (ExtensionFinder finder : finders) {
+-            extensions.addAll(finder.find(type, pluginId, filter));
++            extensions.addAll(finder.find(type, pluginId));
+         }
+ 
+         return extensions;
+@@ -70,14 +60,9 @@ public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListe
+ 
+     @Override
+     public List<ExtensionWrapper> find(String pluginId) {
+-        return find(pluginId, null);
+-    }
+-
+-    @Override
+-    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
+         List<ExtensionWrapper> extensions = new ArrayList<>();
+         for (ExtensionFinder finder : finders) {
+-            extensions.addAll(finder.find(pluginId, filter));
++            extensions.addAll(finder.find(pluginId));
+         }
+ 
+         return extensions;
+diff --git a/src/main/java/org/pf4j/ExtensionFilter.java b/src/main/java/org/pf4j/ExtensionFilter.java
+deleted file mode 100644
+index d76b064..0000000
+--- a/src/main/java/org/pf4j/ExtensionFilter.java
++++ /dev/null
+@@ -1,43 +0,0 @@
+-package org.pf4j;
+-
+-/**
+- * Filter used to restrict the extensions returned by {@link ExtensionFinder}.
+- *
+- * @author pf4j
+- */
+-public class ExtensionFilter {
+-
+-    private String pluginId;
+-    private String extensionClassName;
+-    private Class<?> extensionType;
+-
+-    public ExtensionFilter() {
+-    }
+-
+-    public ExtensionFilter pluginId(String pluginId) {
+-        this.pluginId = pluginId;
+-        return this;
+-    }
+-
+-    public ExtensionFilter extensionClassName(String extensionClassName) {
+-        this.extensionClassName = extensionClassName;
+-        return this;
+-    }
+-
+-    public ExtensionFilter extensionType(Class<?> extensionType) {
+-        this.extensionType = extensionType;
+-        return this;
+-    }
+-
+-    public String getPluginId() {
+-        return pluginId;
+-    }
+-
+-    public String getExtensionClassName() {
+-        return extensionClassName;
+-    }
+-
+-    public Class<?> getExtensionType() {
+-        return extensionType;
+-    }
+-}
+diff --git a/src/main/java/org/pf4j/ExtensionFinder.java b/src/main/java/org/pf4j/ExtensionFinder.java
+index fce4fa8..83d85ab 100755
+--- a/src/main/java/org/pf4j/ExtensionFinder.java
++++ b/src/main/java/org/pf4j/ExtensionFinder.java
+@@ -30,37 +30,16 @@ public interface ExtensionFinder {
+      */
+     <T> List<ExtensionWrapper<T>> find(Class<T> type);
+ 
+-    /**
+-     * Retrieves a list with all extensions found for an extension point and a filter.
+-     */
+-    default <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+-        return find(type);
+-    }
+-
+     /**
+      * Retrieves a list with all extensions found for an extension point and a plugin.
+      */
+     <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId);
+ 
+-    /**
+-     * Retrieves a list with all extensions found for an extension point, a plugin and a filter.
+-     */
+-    default <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter) {
+-        return find(type, pluginId);
+-    }
+-
+     /**
+      * Retrieves a list with all extensions found for a plugin.
+      */
+     List<ExtensionWrapper> find(String pluginId);
+ 
+-    /**
+-     * Retrieves a list with all extensions found for a plugin and a filter.
+-     */
+-    default List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
+-        return find(pluginId);
+-    }
+-
+     /**
+      * Retrieves a list with all extension class names found for a plugin.
+      */
+diff --git a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+index 7b3f246..fa6406b 100755
+--- a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
++++ b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+@@ -163,77 +163,6 @@ class AbstractExtensionFinderTest {
+         assertEquals(0, list.size());
+     }
+ 
+-    @Test
+-    void testFindWithFilter() {
+-        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+-
+-            @Override
+-            public Map<String, Set<String>> readPluginsStorages() {
+-                Map<String, Set<String>> entries = new LinkedHashMap<>();
+-
+-                Set<String> bucket = new HashSet<>();
+-                bucket.add("org.pf4j.test.TestExtension");
+-                entries.put("plugin1", bucket);
+-
+-                return entries;
+-            }
+-
+-            @Override
+-            public Map<String, Set<String>> readClasspathStorages() {
+-                Map<String, Set<String>> entries = new LinkedHashMap<>();
+-
+-                Set<String> bucket = new HashSet<>();
+-                bucket.add("org.pf4j.test.TestExtension");
+-                entries.put(null, bucket);
+-
+-                return entries;
+-            }
+-
+-        };
+-
+-        // 1. Without filter (cache miss first, then hit entries cache)
+-        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class);
+-        assertEquals(2, list.size());
+-
+-        // 2. Filter by pluginId (should hit entries cache)
+-        ExtensionFilter filterByPlugin = new ExtensionFilter().pluginId("plugin1");
+-        list = instance.find(TestExtensionPoint.class, filterByPlugin);
+-        assertEquals(1, list.size());
+-
+-        // 3. Filter by extension class name
+-        ExtensionFilter filterByClassName = new ExtensionFilter().extensionClassName("org.pf4j.test.TestExtension");
+-        list = instance.find(TestExtensionPoint.class, filterByClassName);
+-        assertEquals(2, list.size());
+-
+-        // 4. Filter by extension type
+-        ExtensionFilter filterByType = new ExtensionFilter().extensionType(TestExtensionPoint.class);
+-        list = instance.find(TestExtensionPoint.class, filterByType);
+-        assertEquals(2, list.size());
+-
+-        // 5. Filter combination: pluginId + className + type
+-        ExtensionFilter filterAll = new ExtensionFilter()
+-            .pluginId("plugin1")
+-            .extensionClassName("org.pf4j.test.TestExtension")
+-            .extensionType(TestExtensionPoint.class);
+-        list = instance.find(TestExtensionPoint.class, filterAll);
+-        assertEquals(1, list.size());
+-
+-        // 6. No result scenario (wrong pluginId)
+-        ExtensionFilter filterNoResult1 = new ExtensionFilter().pluginId("wrongPluginId");
+-        list = instance.find(TestExtensionPoint.class, filterNoResult1);
+-        assertEquals(0, list.size());
+-
+-        // 7. No result scenario (wrong class name)
+-        ExtensionFilter filterNoResult2 = new ExtensionFilter().extensionClassName("WrongClass");
+-        list = instance.find(TestExtensionPoint.class, filterNoResult2);
+-        assertEquals(0, list.size());
+-        
+-        // 8. No result scenario (wrong type)
+-        ExtensionFilter filterNoResult3 = new ExtensionFilter().extensionType(String.class);
+-        list = instance.find(TestExtensionPoint.class, filterNoResult3);
+-        assertEquals(0, list.size());
+-    }
+-
+     /**
+      * Test of {@link AbstractExtensionFinder#findClassNames(String)}.
+      */
