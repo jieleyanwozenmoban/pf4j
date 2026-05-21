@@ -1,0 +1,197 @@
+diff --git a/src/main/java/org/pf4j/DefaultPluginManager.java b/src/main/java/org/pf4j/DefaultPluginManager.java
+index 39ca972..836bb76 100755
+--- a/src/main/java/org/pf4j/DefaultPluginManager.java
++++ b/src/main/java/org/pf4j/DefaultPluginManager.java
+@@ -19,8 +19,10 @@ import org.pf4j.util.FileUtils;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ 
++import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.nio.file.Paths;
++import java.util.Arrays;
+ import java.util.List;
+ 
+ /**
+@@ -38,6 +40,9 @@ public class DefaultPluginManager extends AbstractPluginManager {
+ 
+     public static final String PLUGINS_DIR_CONFIG_PROPERTY_NAME = "pf4j.pluginsConfigDir";
+ 
++    private List<PluginLoadingProcessor> loadPluginProcessors;
++    private List<PluginLoadingProcessor> loadPluginFromPathProcessors;
++
+     public DefaultPluginManager() {
+         super();
+     }
+@@ -117,6 +122,41 @@ public class DefaultPluginManager extends AbstractPluginManager {
+         }
+ 
+         log.info("PF4J version {} in '{}' mode", getVersion(), getRuntimeMode());
++
++        this.loadPluginProcessors = Arrays.asList(
++            new PathValidationProcessor(),
++            new ArchiveExtractionProcessor(),
++            new DescriptorParsingProcessor(),
++            new ClassLoaderCreationProcessor(),
++            new PluginWrapperInitializationProcessor(),
++            new DependencyCheckProcessor()
++        );
++
++        this.loadPluginFromPathProcessors = Arrays.asList(
++            new ArchiveExtractionProcessor(),
++            new DescriptorParsingProcessor(),
++            new ClassLoaderCreationProcessor(),
++            new PluginWrapperInitializationProcessor()
++        );
++    }
++
++    @Override
++    public String loadPlugin(Path pluginPath) {
++        PluginLoadingContext context = new PluginLoadingContext(pluginPath);
++        for (PluginLoadingProcessor processor : loadPluginProcessors) {
++            processor.process(context);
++            if (context.isAborted()) {
++                break;
++            }
++        }
++        
++        if (context.isAborted()) {
++            // If aborted, simulate the behavior of calling resolvePlugins anyway and throwing NPE on descriptor access
++            resolvePlugins();
++            return context.getPluginWrapper().getDescriptor().getPluginId();
++        }
++
++        return context.getPluginId();
+     }
+ 
+     /**
+@@ -128,15 +168,122 @@ public class DefaultPluginManager extends AbstractPluginManager {
+      */
+     @Override
+     protected PluginWrapper loadPluginFromPath(Path pluginPath) {
+-        // First unzip any ZIP files
+-        try {
+-            pluginPath = FileUtils.expandIfZip(pluginPath);
+-        } catch (Exception e) {
+-            log.warn("Failed to unzip " + pluginPath, e);
+-            return null;
++        PluginLoadingContext context = new PluginLoadingContext(pluginPath);
++        for (PluginLoadingProcessor processor : loadPluginFromPathProcessors) {
++            processor.process(context);
++            if (context.isAborted()) {
++                break;
++            }
+         }
++        return context.getPluginWrapper();
++    }
++
++    protected class PathValidationProcessor implements PluginLoadingProcessor {
++        @Override
++        public void process(PluginLoadingContext context) {
++            Path pluginPath = context.getPluginPath();
++            if ((pluginPath == null) || Files.notExists(pluginPath)) {
++                throw new IllegalArgumentException(String.format("Specified plugin %s does not exist!", pluginPath));
++            }
++            log.debug("Loading plugin from '{}'", pluginPath);
++        }
++    }
++
++    protected class ArchiveExtractionProcessor implements PluginLoadingProcessor {
++        @Override
++        public void process(PluginLoadingContext context) {
++            try {
++                context.setPluginPath(FileUtils.expandIfZip(context.getPluginPath()));
++            } catch (Exception e) {
++                log.warn("Failed to unzip " + context.getPluginPath(), e);
++                context.setAborted(true);
++            }
++        }
++    }
++
++    protected class DescriptorParsingProcessor implements PluginLoadingProcessor {
++        @Override
++        public void process(PluginLoadingContext context) {
++            Path pluginPath = context.getPluginPath();
++            String pluginId = idForPath(pluginPath);
++            if (pluginId != null) {
++                throw new PluginAlreadyLoadedException(pluginId, pluginPath);
++            }
++
++            PluginDescriptorFinder pluginDescriptorFinder = getPluginDescriptorFinder();
++            log.debug("Use '{}' to find plugins descriptors", pluginDescriptorFinder);
++            log.debug("Finding plugin descriptor for plugin '{}'", pluginPath);
++            PluginDescriptor pluginDescriptor = pluginDescriptorFinder.find(pluginPath);
++            validatePluginDescriptor(pluginDescriptor);
++
++            pluginId = pluginDescriptor.getPluginId();
++            if (plugins.containsKey(pluginId)) {
++                PluginWrapper loadedPlugin = getPlugin(pluginId);
++                throw new PluginRuntimeException("There is an already loaded plugin ({}) "
++                        + "with the same id ({}) as the plugin at path '{}'. Simultaneous loading "
++                        + "of plugins with the same PluginId is not currently supported.\n"
++                        + "As a workaround you may include PluginVersion and PluginProvider "
++                        + "in PluginId.",
++                    loadedPlugin, pluginId, pluginPath);
++            }
+ 
+-        return super.loadPluginFromPath(pluginPath);
++            log.debug("Found descriptor {}", pluginDescriptor);
++            context.setPluginDescriptor(pluginDescriptor);
++            context.setPluginId(pluginId);
++        }
++    }
++
++    protected class ClassLoaderCreationProcessor implements PluginLoadingProcessor {
++        @Override
++        public void process(PluginLoadingContext context) {
++            PluginDescriptor pluginDescriptor = context.getPluginDescriptor();
++            Path pluginPath = context.getPluginPath();
++            String pluginClassName = pluginDescriptor.getPluginClass();
++            log.debug("Class '{}' for plugin '{}'",  pluginClassName, pluginPath);
++
++            log.debug("Loading plugin '{}'", pluginPath);
++            ClassLoader pluginClassLoader = getPluginLoader().loadPlugin(pluginPath, pluginDescriptor);
++            log.debug("Loaded plugin '{}' with class loader '{}'", pluginPath, pluginClassLoader);
++
++            context.setPluginClassLoader(pluginClassLoader);
++        }
++    }
++
++    protected class PluginWrapperInitializationProcessor implements PluginLoadingProcessor {
++        @Override
++        public void process(PluginLoadingContext context) {
++            PluginDescriptor pluginDescriptor = context.getPluginDescriptor();
++            Path pluginPath = context.getPluginPath();
++            ClassLoader pluginClassLoader = context.getPluginClassLoader();
++
++            PluginWrapper pluginWrapper = createPluginWrapper(pluginDescriptor, pluginPath, pluginClassLoader);
++
++            if (isPluginDisabled(pluginDescriptor.getPluginId())) {
++                log.info("Plugin '{}' is disabled", pluginPath);
++                pluginWrapper.setPluginState(PluginState.DISABLED);
++            }
++
++            if (!isPluginValid(pluginWrapper)) {
++                log.warn("Plugin '{}' is invalid and it will be disabled", pluginPath);
++                pluginWrapper.setPluginState(PluginState.DISABLED);
++                pluginWrapper.setFailedException(new PluginRuntimeException("Plugin validation failed"));
++            }
++
++            log.debug("Created wrapper '{}' for plugin '{}'", pluginWrapper, pluginPath);
++
++            addPlugin(pluginWrapper);
++            getUnresolvedPlugins().add(pluginWrapper);
++            getPluginClassLoaders().put(pluginDescriptor.getPluginId(), pluginClassLoader);
++
++            context.setPluginWrapper(pluginWrapper);
++        }
++    }
++
++    protected class DependencyCheckProcessor implements PluginLoadingProcessor {
++        @Override
++        public void process(PluginLoadingContext context) {
++            resolvePlugins();
++        }
+     }
+ 
+ }
