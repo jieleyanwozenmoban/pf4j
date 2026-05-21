@@ -52,6 +52,45 @@ public class JavaSources {
         "    }",
         "}");
 
+    public static final String CONFLICT_CLASS_NAME = "test.ConflictClass";
+    // Host version of conflict class
+    public static final JavaFileObject HOST_CONFLICT_CLASS = JavaFileObjects.forSourceLines("ConflictClass",
+        "package test;",
+        "",
+        "public class ConflictClass {",
+        "   public String getSource() {",
+        "       return \"host\";",
+        "    }",
+        "}");
+    // Dependency plugin version of conflict class
+    public static final JavaFileObject DEPENDENCY_CONFLICT_CLASS = JavaFileObjects.forSourceLines("ConflictClass",
+        "package test;",
+        "",
+        "public class ConflictClass {",
+        "   public String getSource() {",
+        "       return \"dependency\";",
+        "    }",
+        "}");
+    // Current plugin version of conflict class
+    public static final JavaFileObject PLUGIN_CONFLICT_CLASS = JavaFileObjects.forSourceLines("ConflictClass",
+        "package test;",
+        "",
+        "public class ConflictClass {",
+        "   public String getSource() {",
+        "       return \"plugin\";",
+        "    }",
+        "}");
+    // A class in dependency plugin that loads ConflictClass
+    public static final String DEPENDENCY_LOADER_CLASS_NAME = "test.DependencyLoader";
+    public static final JavaFileObject DEPENDENCY_LOADER_CLASS = JavaFileObjects.forSourceLines("DependencyLoader",
+        "package test;",
+        "",
+        "public class DependencyLoader {",
+        "   public static String loadConflictSource() {",
+        "       return new ConflictClass().getSource();",
+        "    }",
+        "}");
+
     /**
      * Compile a list of sources using javac compiler.
      */

@@ -295,8 +295,27 @@ public class PluginClassLoader extends URLClassLoader {
                 continue;
             }
 
+            if (!(classLoader instanceof PluginClassLoader)) {
+                // If it's not a PluginClassLoader, fallback to standard loadClass
+                try {
+                    return classLoader.loadClass(className);
+                } catch (ClassNotFoundException e) {
+                    // try next dependency
+                }
+                continue;
+            }
+
+            // For PluginClassLoader, first check if class is already loaded
+            PluginClassLoader pluginClassLoader = (PluginClassLoader) classLoader;
+            Class<?> loadedClass = pluginClassLoader.findLoadedClass(className);
+            if (loadedClass != null) {
+                log.trace("Found loaded class '{}' in dependency '{}'", className, dependency.getPluginId());
+                return loadedClass;
+            }
+
+            // If not loaded, try to find it directly in the dependency plugin's own classpath
             try {
-                return classLoader.loadClass(className);
+                return pluginClassLoader.findClass(className);
             } catch (ClassNotFoundException e) {
                 // try next dependency
             }

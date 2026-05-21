@@ -471,4 +471,99 @@ class PluginClassLoaderTest {
 
     }
 
+    @Test
+    void testThreeWayClassLoadingConflict() throws Exception {
+        // First, let's create a new scenario specifically for testing three-way conflicts
+        TestPluginManager testPluginManager = new TestPluginManager(pluginsPath);
+        
+        // Step 1: Create dependency plugin descriptor
+        DefaultPluginDescriptor depDescriptor = new DefaultPluginDescriptor()
+            .setPluginId("depPlugin")
+            .setPluginVersion("1.0.0")
+            .setDependencies("");
+        
+        // Compile classes for dependency plugin: its own ConflictClass + DependencyLoader
+        Map<String, JavaFileObject> depClasses = JavaSources.compileAll(
+                JavaSources.DEPENDENCY_CONFLICT_CLASS,
+                JavaSources.DEPENDENCY_LOADER_CLASS)
+            .stream()
+            .map(javaFileObject -> new AbstractMap.SimpleEntry<>(
+                JavaFileObjectUtils.getClassName(javaFileObject), javaFileObject))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        
+        Path depClassesPath = Paths.get("depClasses");
+        Path depGreetingClassPath = depClassesPath.resolve(JavaSources.CONFLICT_CLASS_NAME.replace('.', '/') + ".class");
+        Path depLoaderClassPath = depClassesPath.resolve(JavaSources.DEPENDENCY_LOADER_CLASS_NAME.replace('.', '/') + ".class");
+        
+        // Create dependency plugin zip
+        Path depPluginPath = pluginsPath.resolve("depPlugin-1.0.0.zip");
+        PluginZip depPluginZip = new PluginZip.Builder(depPluginPath, "depPlugin")
+            .pluginVersion("1.0.0")
+            .addFile(depGreetingClassPath, JavaFileObjectUtils.getAllBytes(depClasses.get(JavaSources.CONFLICT_CLASS_NAME)))
+            .addFile(depLoaderClassPath, JavaFileObjectUtils.getAllBytes(depClasses.get(JavaSources.DEPENDENCY_LOADER_CLASS_NAME)))
+            .build();
+        depPluginZip.unzip();
+        
+        // Create and configure dependency PluginClassLoader
+        PluginClassLoader depClassLoader = new PluginClassLoader(
+            testPluginManager, depDescriptor, PluginClassLoaderTest.class.getClassLoader());
+        testPluginManager.addClassLoader("depPlugin", depClassLoader);
+        PluginClasspath depClasspath = new DefaultPluginClasspath();
+        for (String classesDirectory : depClasspath.getClassesDirectories()) {
+            File classesDirectoryFile = depPluginZip.unzippedPath().resolve(classesDirectory).toFile();
+            depClassLoader.addFile(classesDirectoryFile);
+        }
+        
+        // Step 2: Create main plugin descriptor with dependency on depPlugin
+        DefaultPluginDescriptor mainDescriptor = new DefaultPluginDescriptor()
+            .setPluginId("mainPlugin")
+            .setPluginVersion("1.0.0")
+            .setDependencies("depPlugin");
+        
+        // Compile classes for main plugin: its own ConflictClass
+        Map<String, JavaFileObject> mainClasses = JavaSources.compileAll(JavaSources.PLUGIN_CONFLICT_CLASS)
+            .stream()
+            .map(javaFileObject -> new AbstractMap.SimpleEntry<>(
+                JavaFileObjectUtils.getClassName(javaFileObject), javaFileObject))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        
+        Path mainClassesPath = Paths.get("mainClasses");
+        Path mainConflictClassPath = mainClassesPath.resolve(JavaSources.CONFLICT_CLASS_NAME.replace('.', '/') + ".class");
+        
+        // Create main plugin zip
+        Path mainPluginPath = pluginsPath.resolve("mainPlugin-1.0.0.zip");
+        PluginZip mainPluginZip = new PluginZip.Builder(mainPluginPath, "mainPlugin")
+            .pluginVersion("1.0.0")
+            .addFile(mainConflictClassPath, JavaFileObjectUtils.getAllBytes(mainClasses.get(JavaSources.CONFLICT_CLASS_NAME)))
+            .build();
+        mainPluginZip.unzip();
+        
+        // Create and configure main PluginClassLoader
+        PluginClassLoader mainClassLoader = new PluginClassLoader(
+            testPluginManager, mainDescriptor, PluginClassLoaderTest.class.getClassLoader());
+        testPluginManager.addClassLoader("mainPlugin", mainClassLoader);
+        PluginClasspath mainClasspath = new DefaultPluginClasspath();
+        for (String classesDirectory : mainClasspath.getClassesDirectories()) {
+            File classesDirectoryFile = mainPluginZip.unzippedPath().resolve(classesDirectory).toFile();
+            mainClassLoader.addFile(classesDirectoryFile);
+        }
+        
+        // Now let's test the behavior!
+        
+        // Test 1: Main plugin should load its own ConflictClass (source = "plugin")
+        Class<?> mainConflictClass = mainClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
+        Object mainConflictInstance = mainConflictClass.getDeclaredConstructor().newInstance();
+        assertEquals("plugin", mainConflictClass.getMethod("getSource").invoke(mainConflictInstance));
+        
+        // Test 2: When loading DependencyLoader from main plugin, it should load from dependency plugin
+        Class<?> depLoaderClass = mainClassLoader.loadClass(JavaSources.DEPENDENCY_LOADER_CLASS_NAME);
+        // And DependencyLoader should load dependency's own ConflictClass (not host or main plugin's)
+        assertEquals("dependency", depLoaderClass.getMethod("loadConflictSource").invoke(null));
+        
+        // Test 3: Directly loading ConflictClass through dependency's classloader should return dependency's version
+        Class<?> depConflictClass = depClassLoader.loadClass(JavaSources.CONFLICT_CLASS_NAME);
+        Object depConflictInstance = depConflictClass.getDeclaredConstructor().newInstance();
+        assertEquals("dependency", depConflictClass.getMethod("getSource").invoke(depConflictInstance));
+    }
+
 }
