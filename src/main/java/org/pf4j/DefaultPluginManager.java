@@ -19,6 +19,7 @@ import org.pf4j.util.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -119,24 +120,52 @@ public class DefaultPluginManager extends AbstractPluginManager {
         log.info("PF4J version {} in '{}' mode", getVersion(), getRuntimeMode());
     }
 
-    /**
-     * Load a plugin from disk. If the path is a zip file, first unpack.
-     *
-     * @param pluginPath plugin location on disk
-     * @return PluginWrapper for the loaded plugin or null if not loaded
-     * @throws PluginRuntimeException if problems during load
-     */
+    @Override
+    protected List<PluginLoadingProcessor> createPluginLoadingProcessors() {
+        List<PluginLoadingProcessor> processors = super.createPluginLoadingProcessors();
+        processors.add(0, new ArchiveExpansionProcessor());
+        return processors;
+    }
+
     @Override
     protected PluginWrapper loadPluginFromPath(Path pluginPath) {
-        // First unzip any ZIP files
         try {
-            pluginPath = FileUtils.expandIfZip(pluginPath);
-        } catch (Exception e) {
-            log.warn("Failed to unzip " + pluginPath, e);
-            return null;
+            return super.loadPluginFromPath(pluginPath);
+        } catch (PluginRuntimeException e) {
+            if (e.getCause() instanceof ArchiveExpansionException) {
+                log.warn("Failed to unzip {}", pluginPath, e);
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Exception thrown when archive expansion fails.
+     * Used to signal unzip failures through the processor chain.
+     */
+    protected static class ArchiveExpansionException extends RuntimeException {
+        public ArchiveExpansionException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    /**
+     * Processor that expands zip archives before plugin loading.
+     * If the plugin path is a zip file, it will be expanded to a directory.
+     */
+    protected static class ArchiveExpansionProcessor implements PluginLoadingProcessor {
+
+        @Override
+        public PluginLoadingContext process(PluginLoadingContext context) {
+            try {
+                Path expandedPath = FileUtils.expandIfZip(context.getResolvedPath());
+                return context.withResolvedPath(expandedPath);
+            } catch (IOException e) {
+                throw new PluginRuntimeException(new ArchiveExpansionException(e));
+            }
         }
 
-        return super.loadPluginFromPath(pluginPath);
     }
 
 }

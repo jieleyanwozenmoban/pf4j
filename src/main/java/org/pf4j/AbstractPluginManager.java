@@ -111,6 +111,8 @@ public abstract class AbstractPluginManager implements PluginManager {
     protected VersionManager versionManager;
     protected ResolveRecoveryStrategy resolveRecoveryStrategy;
 
+    protected List<PluginLoadingProcessor> pluginLoadingProcessors;
+
     /**
      * The plugins roots are supplied as comma-separated list by {@code System.getProperty("pf4j.pluginsDir", "plugins")}.
      */
@@ -853,6 +855,33 @@ public abstract class AbstractPluginManager implements PluginManager {
         versionManager = createVersionManager();
         dependencyResolver = new DependencyResolver(versionManager);
         resolveRecoveryStrategy = ResolveRecoveryStrategy.THROW_EXCEPTION;
+
+        pluginLoadingProcessors = createPluginLoadingProcessors();
+    }
+
+    /**
+     * Creates the plugin loading processor chain.
+     * Override this method to customize the loading pipeline.
+     *
+     * @return the list of processors in execution order
+     */
+    protected List<PluginLoadingProcessor> createPluginLoadingProcessors() {
+        List<PluginLoadingProcessor> processors = new ArrayList<>();
+        processors.add(new PathValidationProcessor());
+        processors.add(new DescriptorFindingProcessor());
+        processors.add(new ClassLoaderCreationProcessor());
+        processors.add(new PluginWrapperInitializationProcessor());
+        processors.add(new PluginRegistrationProcessor());
+        return processors;
+    }
+
+    /**
+     * Returns the plugin loading processors.
+     *
+     * @return the list of processors
+     */
+    protected List<PluginLoadingProcessor> getPluginLoadingProcessors() {
+        return pluginLoadingProcessors;
     }
 
     /**
@@ -957,7 +986,7 @@ public abstract class AbstractPluginManager implements PluginManager {
     }
 
     /**
-     * Load the plugin from the specified path.
+     * Load the plugin from the specified path using the processor chain.
      *
      * @param pluginPath the path to the plugin
      * @return the loaded plugin
@@ -965,67 +994,13 @@ public abstract class AbstractPluginManager implements PluginManager {
      * @throws InvalidPluginDescriptorException if the plugin is invalid
      */
     protected PluginWrapper loadPluginFromPath(Path pluginPath) {
-        // Test for plugin path duplication
-        String pluginId = idForPath(pluginPath);
-        if (pluginId != null) {
-            throw new PluginAlreadyLoadedException(pluginId, pluginPath);
+        PluginLoadingContext context = PluginLoadingContext.create(this, pluginPath);
+
+        for (PluginLoadingProcessor processor : pluginLoadingProcessors) {
+            context = processor.process(context);
         }
 
-        // Retrieve and validate the plugin descriptor
-        PluginDescriptorFinder pluginDescriptorFinder = getPluginDescriptorFinder();
-        log.debug("Use '{}' to find plugins descriptors", pluginDescriptorFinder);
-        log.debug("Finding plugin descriptor for plugin '{}'", pluginPath);
-        PluginDescriptor pluginDescriptor = pluginDescriptorFinder.find(pluginPath);
-        validatePluginDescriptor(pluginDescriptor);
-
-        // Check there are no loaded plugins with the retrieved id
-        pluginId = pluginDescriptor.getPluginId();
-        if (plugins.containsKey(pluginId)) {
-            PluginWrapper loadedPlugin = getPlugin(pluginId);
-            throw new PluginRuntimeException("There is an already loaded plugin ({}) "
-                    + "with the same id ({}) as the plugin at path '{}'. Simultaneous loading "
-                    + "of plugins with the same PluginId is not currently supported.\n"
-                    + "As a workaround you may include PluginVersion and PluginProvider "
-                    + "in PluginId.",
-                loadedPlugin, pluginId, pluginPath);
-        }
-
-        log.debug("Found descriptor {}", pluginDescriptor);
-        String pluginClassName = pluginDescriptor.getPluginClass();
-        log.debug("Class '{}' for plugin '{}'",  pluginClassName, pluginPath);
-
-        // load plugin
-        log.debug("Loading plugin '{}'", pluginPath);
-        ClassLoader pluginClassLoader = getPluginLoader().loadPlugin(pluginPath, pluginDescriptor);
-        log.debug("Loaded plugin '{}' with class loader '{}'", pluginPath, pluginClassLoader);
-
-        PluginWrapper pluginWrapper = createPluginWrapper(pluginDescriptor, pluginPath, pluginClassLoader);
-
-        // test for disabled plugin
-        if (isPluginDisabled(pluginDescriptor.getPluginId())) {
-            log.info("Plugin '{}' is disabled", pluginPath);
-            pluginWrapper.setPluginState(PluginState.DISABLED);
-        }
-
-        // validate the plugin
-        if (!isPluginValid(pluginWrapper)) {
-            log.warn("Plugin '{}' is invalid and it will be disabled", pluginPath);
-            pluginWrapper.setPluginState(PluginState.DISABLED);
-            pluginWrapper.setFailedException(new PluginRuntimeException("Plugin validation failed"));
-        }
-
-        log.debug("Created wrapper '{}' for plugin '{}'", pluginWrapper, pluginPath);
-
-        pluginId = pluginDescriptor.getPluginId();
-
-        // add plugin to the list with plugins
-        addPlugin(pluginWrapper);
-        getUnresolvedPlugins().add(pluginWrapper);
-
-        // add plugin class loader to the list with class loaders
-        getPluginClassLoaders().put(pluginId, pluginClassLoader);
-
-        return pluginWrapper;
+        return context.getPluginWrapper();
     }
 
     /**
