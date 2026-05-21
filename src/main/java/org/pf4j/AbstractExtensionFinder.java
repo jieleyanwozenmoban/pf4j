@@ -51,14 +51,22 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
 
     @Override
     public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
-        log.debug("Finding extensions of extension point '{}'", type.getName());
+        return find(type, (ExtensionFilter) null);
+    }
+
+    @Override
+    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+        log.debug("Finding extensions of extension point '{}' with filter", type.getName());
         Map<String, Set<String>> entries = getEntries();
         List<ExtensionWrapper<T>> result = new ArrayList<>();
 
         // add extensions found in classpath and plugins
         for (String pluginId : entries.keySet()) {
+            if (filter != null && filter.getPluginId() != null && !filter.getPluginId().equals(pluginId)) {
+                continue;
+            }
             // classpath's extensions <=> pluginId = null
-            List<ExtensionWrapper<T>> pluginExtensions = find(type, pluginId);
+            List<ExtensionWrapper<T>> pluginExtensions = find(type, pluginId, filter);
             result.addAll(pluginExtensions);
         }
 
@@ -77,6 +85,12 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
     @Override
     @SuppressWarnings("unchecked")
     public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
+        return find(type, pluginId, null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter) {
         log.debug("Finding extensions of extension point '{}' for plugin '{}'", type.getName(), pluginId);
         List<ExtensionWrapper<T>> result = new ArrayList<>();
 
@@ -100,6 +114,9 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
         ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
 
         for (String className : classNames) {
+            if (filter != null && filter.getExtensionClassName() != null && !filter.getExtensionClassName().equals(className)) {
+                continue;
+            }
             try {
                 if (isCheckForExtensionDependencies()) {
                     // Load extension annotation without initializing the class itself.
@@ -139,6 +156,10 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
                 log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
                 Class<?> extensionClass = classLoader.loadClass(className);
 
+                if (filter != null && filter.getExtensionType() != null && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
+                    continue;
+                }
+
                 log.debug("Checking extension type '{}'", className);
                 if (type.isAssignableFrom(extensionClass)) {
                     ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
@@ -169,8 +190,17 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
 
     @Override
     public List<ExtensionWrapper> find(String pluginId) {
+        return find(pluginId, null);
+    }
+
+    @Override
+    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
         log.debug("Finding extensions from plugin '{}'", pluginId);
         List<ExtensionWrapper> result = new ArrayList<>();
+
+        if (filter != null && filter.getPluginId() != null && !filter.getPluginId().equals(pluginId)) {
+            return result;
+        }
 
         Set<String> classNames = findClassNames(pluginId);
         if (classNames.isEmpty()) {
@@ -191,9 +221,16 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
         ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
 
         for (String className : classNames) {
+            if (filter != null && filter.getExtensionClassName() != null && !filter.getExtensionClassName().equals(className)) {
+                continue;
+            }
             try {
                 log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
                 Class<?> extensionClass = classLoader.loadClass(className);
+
+                if (filter != null && filter.getExtensionType() != null && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
+                    continue;
+                }
 
                 ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
                 result.add(extensionWrapper);

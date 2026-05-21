@@ -163,6 +163,77 @@ class AbstractExtensionFinderTest {
         assertEquals(0, list.size());
     }
 
+    @Test
+    void testFindWithFilter() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put(null, bucket);
+
+                return entries;
+            }
+
+        };
+
+        // 1. Without filter (cache miss first, then hit entries cache)
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class);
+        assertEquals(2, list.size());
+
+        // 2. Filter by pluginId (should hit entries cache)
+        ExtensionFilter filterByPlugin = new ExtensionFilter().pluginId("plugin1");
+        list = instance.find(TestExtensionPoint.class, filterByPlugin);
+        assertEquals(1, list.size());
+
+        // 3. Filter by extension class name
+        ExtensionFilter filterByClassName = new ExtensionFilter().extensionClassName("org.pf4j.test.TestExtension");
+        list = instance.find(TestExtensionPoint.class, filterByClassName);
+        assertEquals(2, list.size());
+
+        // 4. Filter by extension type
+        ExtensionFilter filterByType = new ExtensionFilter().extensionType(TestExtensionPoint.class);
+        list = instance.find(TestExtensionPoint.class, filterByType);
+        assertEquals(2, list.size());
+
+        // 5. Filter combination: pluginId + className + type
+        ExtensionFilter filterAll = new ExtensionFilter()
+            .pluginId("plugin1")
+            .extensionClassName("org.pf4j.test.TestExtension")
+            .extensionType(TestExtensionPoint.class);
+        list = instance.find(TestExtensionPoint.class, filterAll);
+        assertEquals(1, list.size());
+
+        // 6. No result scenario (wrong pluginId)
+        ExtensionFilter filterNoResult1 = new ExtensionFilter().pluginId("wrongPluginId");
+        list = instance.find(TestExtensionPoint.class, filterNoResult1);
+        assertEquals(0, list.size());
+
+        // 7. No result scenario (wrong class name)
+        ExtensionFilter filterNoResult2 = new ExtensionFilter().extensionClassName("WrongClass");
+        list = instance.find(TestExtensionPoint.class, filterNoResult2);
+        assertEquals(0, list.size());
+        
+        // 8. No result scenario (wrong type)
+        ExtensionFilter filterNoResult3 = new ExtensionFilter().extensionType(String.class);
+        list = instance.find(TestExtensionPoint.class, filterNoResult3);
+        assertEquals(0, list.size());
+    }
+
     /**
      * Test of {@link AbstractExtensionFinder#findClassNames(String)}.
      */
