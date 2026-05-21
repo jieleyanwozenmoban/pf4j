@@ -312,4 +312,350 @@ class AbstractExtensionFinderTest {
         assertTrue(extensionFinder.checkDifferentClassLoaders(extensionPointClass, extensionClass));
     }
 
+    @Test
+    void testFindWithEmptyFilterReturnsAllExtensions() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter emptyFilter = ExtensionFilter.newBuilder().build();
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, emptyFilter);
+        assertEquals(1, list.size());
+        assertEquals("org.pf4j.test.TestExtension", list.get(0).getDescriptor().extensionClass.getName());
+    }
+
+    @Test
+    void testFindWithFilterByPluginId() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin2", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter filterPlugin1 = ExtensionFilter.newBuilder().pluginId("plugin1").build();
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterPlugin1);
+        assertEquals(1, list.size());
+
+        ExtensionFilter filterPlugin2 = ExtensionFilter.newBuilder().pluginId("plugin2").build();
+        list = instance.find(TestExtensionPoint.class, filterPlugin2);
+        assertEquals(0, list.size());
+
+        ExtensionFilter filterNonExistent = ExtensionFilter.newBuilder().pluginId("nonexistent").build();
+        list = instance.find(TestExtensionPoint.class, filterNonExistent);
+        assertEquals(0, list.size());
+    }
+
+    @Test
+    void testFindWithFilterByClassName() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                bucket.add("org.pf4j.other.OtherExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter filterMatch = ExtensionFilter.newBuilder().className("TestExtension").build();
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterMatch);
+        assertEquals(1, list.size());
+        assertTrue(list.get(0).getDescriptor().extensionClass.getName().contains("TestExtension"));
+
+        ExtensionFilter filterOther = ExtensionFilter.newBuilder().className("OtherExtension").build();
+        list = instance.find(TestExtensionPoint.class, filterOther);
+        assertEquals(0, list.size());
+
+        ExtensionFilter filterNoMatch = ExtensionFilter.newBuilder().className("NonExistentClass").build();
+        list = instance.find(TestExtensionPoint.class, filterNoMatch);
+        assertEquals(0, list.size());
+    }
+
+    @Test
+    void testFindWithFilterByExtensionType() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter filterByType = ExtensionFilter.newBuilder().extensionType(TestExtension.class).build();
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterByType);
+        assertEquals(1, list.size());
+
+        ExtensionFilter filterByUnrelatedType = ExtensionFilter.newBuilder().extensionType(String.class).build();
+        list = instance.find(TestExtensionPoint.class, filterByUnrelatedType);
+        assertEquals(0, list.size());
+    }
+
+    @Test
+    void testFindWithCombinedFilters() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin2", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter filterCombined = ExtensionFilter.newBuilder()
+            .pluginId("plugin1")
+            .className("TestExtension")
+            .extensionType(TestExtension.class)
+            .build();
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterCombined);
+        assertEquals(1, list.size());
+
+        ExtensionFilter filterMismatch = ExtensionFilter.newBuilder()
+            .pluginId("plugin1")
+            .className("NonExistent")
+            .build();
+        list = instance.find(TestExtensionPoint.class, filterMismatch);
+        assertEquals(0, list.size());
+
+        ExtensionFilter filterPlugin2WithTestExtension = ExtensionFilter.newBuilder()
+            .pluginId("plugin2")
+            .className("TestExtension")
+            .build();
+        list = instance.find(TestExtensionPoint.class, filterPlugin2WithTestExtension);
+        assertEquals(0, list.size());
+    }
+
+    @Test
+    void testFindByFilterWithoutType() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter emptyFilter = ExtensionFilter.newBuilder().build();
+        List<ExtensionWrapper> list = instance.find(emptyFilter);
+        assertEquals(1, list.size());
+
+        ExtensionFilter filterByPlugin = ExtensionFilter.newBuilder().pluginId("plugin1").build();
+        list = instance.find(filterByPlugin);
+        assertEquals(1, list.size());
+
+        ExtensionFilter filterByClassName = ExtensionFilter.newBuilder().className("TestExtension").build();
+        list = instance.find(filterByClassName);
+        assertEquals(1, list.size());
+
+        ExtensionFilter filterByExtType = ExtensionFilter.newBuilder().extensionType(TestExtension.class).build();
+        list = instance.find(filterByExtType);
+        assertEquals(1, list.size());
+
+        ExtensionFilter filterNoMatch = ExtensionFilter.newBuilder().className("NonExistent").build();
+        list = instance.find(filterNoMatch);
+        assertEquals(0, list.size());
+    }
+
+    @Test
+    void testFilteredResultsDoNotPolluteGlobalCache() {
+        final int[] readStoragesCount = {0};
+
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                readStoragesCount[0]++;
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter filter1 = ExtensionFilter.newBuilder().className("TestExtension").build();
+        List<ExtensionWrapper<TestExtensionPoint>> list1 = instance.find(TestExtensionPoint.class, filter1);
+        assertEquals(1, list1.size());
+
+        ExtensionFilter filter2 = ExtensionFilter.newBuilder().className("NonExistent").build();
+        List<ExtensionWrapper<TestExtensionPoint>> list2 = instance.find(TestExtensionPoint.class, filter2);
+        assertEquals(0, list2.size());
+
+        ExtensionFilter filter3 = ExtensionFilter.newBuilder().build();
+        List<ExtensionWrapper<TestExtensionPoint>> list3 = instance.find(TestExtensionPoint.class, filter3);
+        assertEquals(1, list3.size());
+
+        assertEquals(1, readStoragesCount[0], "Entries should only be read once (cached)");
+    }
+
+    @Test
+    void testCacheHitForUnfilteredAndFilteredCalls() {
+        final int[] readStoragesCount = {0};
+
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                readStoragesCount[0]++;
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        instance.find(TestExtensionPoint.class);
+        instance.find(TestExtensionPoint.class, "plugin1");
+        instance.find("plugin1");
+
+        ExtensionFilter filter = ExtensionFilter.newBuilder().pluginId("plugin1").build();
+        instance.find(TestExtensionPoint.class, filter);
+        instance.find(filter);
+
+        assertEquals(1, readStoragesCount[0], "All calls should share the same entries cache");
+    }
+
+    @Test
+    void testFilterWithNoMatchingResultsReturnsEmptyList() {
+        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+
+                Set<String> bucket = new HashSet<>();
+                bucket.add("org.pf4j.test.TestExtension");
+                entries.put("plugin1", bucket);
+
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+
+        ExtensionFilter pluginIdFilter = ExtensionFilter.newBuilder().pluginId("nonexistent").build();
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, pluginIdFilter);
+        assertEquals(0, list.size());
+
+        ExtensionFilter classNameFilter = ExtensionFilter.newBuilder().className("completely.DifferentClass").build();
+        list = instance.find(TestExtensionPoint.class, classNameFilter);
+        assertEquals(0, list.size());
+
+        ExtensionFilter extTypeFilter = ExtensionFilter.newBuilder().extensionType(Thread.class).build();
+        list = instance.find(TestExtensionPoint.class, extTypeFilter);
+        assertEquals(0, list.size());
+
+        ExtensionFilter combinedFilter = ExtensionFilter.newBuilder()
+            .pluginId("plugin1")
+            .className("TestExtension")
+            .extensionType(Thread.class)
+            .build();
+        list = instance.find(TestExtensionPoint.class, combinedFilter);
+        assertEquals(0, list.size());
+    }
+
 }

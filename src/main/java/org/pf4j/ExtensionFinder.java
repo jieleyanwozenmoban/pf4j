@@ -45,4 +45,28 @@ public interface ExtensionFinder {
      */
     Set<String> findClassNames(String pluginId);
 
+    /**
+     * Retrieves a list with all extensions found for an extension point,
+     * filtered by the given filter criteria.
+     * <p>
+     * The filter can specify plugin id, class name, and/or extension type.
+     * Only extensions matching all non-null filter criteria are returned.
+     *
+     * @param type the extension point type
+     * @param filter the filter to apply, may be empty (returns same as {@link #find(Class)})
+     * @return a list of matching extension wrappers
+     */
+    <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter);
+
+    /**
+     * Retrieves a list with all extensions matching the given filter criteria.
+     * <p>
+     * The filter can specify plugin id, class name, and/or extension type.
+     * Only extensions matching all non-null filter criteria are returned.
+     *
+     * @param filter the filter to apply, may be empty (returns same as {@link #find(Class)})
+     * @return a list of matching extension wrappers
+     */
+    List<ExtensionWrapper> find(ExtensionFilter filter);
+
 }

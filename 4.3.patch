@@ -1,0 +1,600 @@
+diff --git a/src/main/java/org/pf4j/AbstractExtensionFinder.java b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+index b924211..553b623 100755
+--- a/src/main/java/org/pf4j/AbstractExtensionFinder.java
++++ b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+@@ -376,6 +376,176 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+         return null;
+     }
+ 
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
++        log.debug("Finding extensions of extension point '{}' with filter {}", type.getName(), filter);
++        List<ExtensionWrapper<T>> result = new ArrayList<>();
++
++        Map<String, Set<String>> entries = getEntries();
++
++        if (filter.hasPluginId()) {
++            String pluginId = filter.getPluginId();
++            List<ExtensionWrapper<T>> pluginExtensions = findFilteredByPlugin(type, pluginId, filter);
++            result.addAll(pluginExtensions);
++        } else {
++            for (String pluginId : entries.keySet()) {
++                List<ExtensionWrapper<T>> pluginExtensions = findFilteredByPlugin(type, pluginId, filter);
++                result.addAll(pluginExtensions);
++            }
++        }
++
++        if (result.isEmpty()) {
++            log.debug("No extensions found for extension point '{}' with filter {}", type.getName(), filter);
++        } else {
++            log.debug("Found {} extensions for extension point '{}' with filter {}", result.size(), type.getName(), filter);
++        }
++
++        Collections.sort(result);
++        return result;
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(ExtensionFilter filter) {
++        log.debug("Finding extensions with filter {}", filter);
++        List<ExtensionWrapper> result = new ArrayList<>();
++
++        Map<String, Set<String>> entries = getEntries();
++
++        if (filter.hasPluginId()) {
++            String pluginId = filter.getPluginId();
++            List<ExtensionWrapper> pluginExtensions = findFilteredByPlugin(pluginId, filter);
++            result.addAll(pluginExtensions);
++        } else {
++            for (String pluginId : entries.keySet()) {
++                List<ExtensionWrapper> pluginExtensions = findFilteredByPlugin(pluginId, filter);
++                result.addAll(pluginExtensions);
++            }
++        }
++
++        if (result.isEmpty()) {
++            log.debug("No extensions found with filter {}", filter);
++        } else {
++            log.debug("Found {} extensions with filter {}", result.size(), filter);
++        }
++
++        Collections.sort(result);
++        return result;
++    }
++
++    @SuppressWarnings("unchecked")
++    private <T> List<ExtensionWrapper<T>> findFilteredByPlugin(Class<T> type, String pluginId, ExtensionFilter filter) {
++        List<ExtensionWrapper<T>> result = new ArrayList<>();
++
++        Set<String> classNames = findClassNames(pluginId);
++        if (classNames.isEmpty()) {
++            return result;
++        }
++
++        if (pluginId != null) {
++            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
++            if (!pluginWrapper.getPluginState().isStarted()) {
++                return result;
++            }
++        }
++
++        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
++
++        for (String className : classNames) {
++            if (filter.hasClassName() && !className.contains(filter.getClassName())) {
++                continue;
++            }
++
++            try {
++                if (isCheckForExtensionDependencies()) {
++                    ExtensionInfo extensionInfo = getExtensionInfo(className, classLoader);
++                    if (extensionInfo == null) {
++                        log.error("No extension annotation was found for '{}'", className);
++                        continue;
++                    }
++
++                    List<String> missingPluginIds = new ArrayList<>();
++                    for (String requiredPluginId : extensionInfo.getPlugins()) {
++                        PluginWrapper requiredPlugin = pluginManager.getPlugin(requiredPluginId);
++                        if (requiredPlugin == null || !requiredPlugin.getPluginState().isStarted()) {
++                            missingPluginIds.add(requiredPluginId);
++                        }
++                    }
++                    if (!missingPluginIds.isEmpty()) {
++                        StringBuilder missing = new StringBuilder();
++                        for (String missingPluginId : missingPluginIds) {
++                            if (missing.length() > 0) missing.append(", ");
++                            missing.append(missingPluginId);
++                        }
++                        log.trace("Extension '{}' is ignored due to missing plugins: {}", className, missing);
++                        continue;
++                    }
++                }
++
++                Class<?> extensionClass = classLoader.loadClass(className);
++
++                if (type.isAssignableFrom(extensionClass)) {
++                    if (filter.hasExtensionType() && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
++                        log.trace("Extension '{}' excluded by extensionType filter '{}'", className, filter.getExtensionType().getName());
++                        continue;
++                    }
++
++                    ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
++                    result.add(extensionWrapper);
++                } else {
++                    if (checkDifferentClassLoaders(type, extensionClass)) {
++                        log.error("Different class loaders: '{}' (E) and '{}' (EP)", extensionClass.getClassLoader(), type.getClassLoader());
++                    }
++                }
++            } catch (ClassNotFoundException | NoClassDefFoundError e) {
++                log.error(e.getMessage(), e);
++            }
++        }
++
++        Collections.sort(result);
++        return result;
++    }
++
++    private List<ExtensionWrapper> findFilteredByPlugin(String pluginId, ExtensionFilter filter) {
++        List<ExtensionWrapper> result = new ArrayList<>();
++
++        Set<String> classNames = findClassNames(pluginId);
++        if (classNames.isEmpty()) {
++            return result;
++        }
++
++        if (pluginId != null) {
++            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
++            if (!pluginWrapper.getPluginState().isStarted()) {
++                return result;
++            }
++        }
++
++        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
++
++        for (String className : classNames) {
++            if (filter.hasClassName() && !className.contains(filter.getClassName())) {
++                continue;
++            }
++
++            try {
++                Class<?> extensionClass = classLoader.loadClass(className);
++
++                if (filter.hasExtensionType() && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
++                    log.trace("Extension '{}' excluded by extensionType filter '{}'", className, filter.getExtensionType().getName());
++                    continue;
++                }
++
++                ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
++                result.add(extensionWrapper);
++            } catch (ClassNotFoundException | NoClassDefFoundError e) {
++                log.error(e.getMessage(), e);
++            }
++        }
++
++        Collections.sort(result);
++        return result;
++    }
++
+     boolean checkDifferentClassLoaders(Class<?> type, Class<?> extensionClass) {
+         ClassLoader typeClassLoader = type.getClassLoader(); // class loader of extension point
+         ClassLoader extensionClassLoader = extensionClass.getClassLoader();
+diff --git a/src/main/java/org/pf4j/DefaultExtensionFinder.java b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+index 1a6fc6b..dd7c899 100755
+--- a/src/main/java/org/pf4j/DefaultExtensionFinder.java
++++ b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+@@ -78,6 +78,26 @@ public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListe
+         return classNames;
+     }
+ 
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
++        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(type, filter));
++        }
++
++        return extensions;
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(ExtensionFilter filter) {
++        List<ExtensionWrapper> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(filter));
++        }
++
++        return extensions;
++    }
++
+     @Override
+     public void pluginStateChanged(PluginStateEvent event) {
+         for (ExtensionFinder finder : finders) {
+diff --git a/src/main/java/org/pf4j/ExtensionFinder.java b/src/main/java/org/pf4j/ExtensionFinder.java
+index 83d85ab..58dcf06 100755
+--- a/src/main/java/org/pf4j/ExtensionFinder.java
++++ b/src/main/java/org/pf4j/ExtensionFinder.java
+@@ -45,4 +45,28 @@ public interface ExtensionFinder {
+      */
+     Set<String> findClassNames(String pluginId);
+ 
++    /**
++     * Retrieves a list with all extensions found for an extension point,
++     * filtered by the given filter criteria.
++     * <p>
++     * The filter can specify plugin id, class name, and/or extension type.
++     * Only extensions matching all non-null filter criteria are returned.
++     *
++     * @param type the extension point type
++     * @param filter the filter to apply, may be empty (returns same as {@link #find(Class)})
++     * @return a list of matching extension wrappers
++     */
++    <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter);
++
++    /**
++     * Retrieves a list with all extensions matching the given filter criteria.
++     * <p>
++     * The filter can specify plugin id, class name, and/or extension type.
++     * Only extensions matching all non-null filter criteria are returned.
++     *
++     * @param filter the filter to apply, may be empty (returns same as {@link #find(Class)})
++     * @return a list of matching extension wrappers
++     */
++    List<ExtensionWrapper> find(ExtensionFilter filter);
++
+ }
+diff --git a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+index fa6406b..829f359 100755
+--- a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
++++ b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+@@ -312,4 +312,350 @@ class AbstractExtensionFinderTest {
+         assertTrue(extensionFinder.checkDifferentClassLoaders(extensionPointClass, extensionClass));
+     }
+ 
++    @Test
++    void testFindWithEmptyFilterReturnsAllExtensions() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter emptyFilter = ExtensionFilter.newBuilder().build();
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, emptyFilter);
++        assertEquals(1, list.size());
++        assertEquals("org.pf4j.test.TestExtension", list.get(0).getDescriptor().extensionClass.getName());
++    }
++
++    @Test
++    void testFindWithFilterByPluginId() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin2", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter filterPlugin1 = ExtensionFilter.newBuilder().pluginId("plugin1").build();
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterPlugin1);
++        assertEquals(1, list.size());
++
++        ExtensionFilter filterPlugin2 = ExtensionFilter.newBuilder().pluginId("plugin2").build();
++        list = instance.find(TestExtensionPoint.class, filterPlugin2);
++        assertEquals(0, list.size());
++
++        ExtensionFilter filterNonExistent = ExtensionFilter.newBuilder().pluginId("nonexistent").build();
++        list = instance.find(TestExtensionPoint.class, filterNonExistent);
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    void testFindWithFilterByClassName() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                bucket.add("org.pf4j.other.OtherExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter filterMatch = ExtensionFilter.newBuilder().className("TestExtension").build();
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterMatch);
++        assertEquals(1, list.size());
++        assertTrue(list.get(0).getDescriptor().extensionClass.getName().contains("TestExtension"));
++
++        ExtensionFilter filterOther = ExtensionFilter.newBuilder().className("OtherExtension").build();
++        list = instance.find(TestExtensionPoint.class, filterOther);
++        assertEquals(0, list.size());
++
++        ExtensionFilter filterNoMatch = ExtensionFilter.newBuilder().className("NonExistentClass").build();
++        list = instance.find(TestExtensionPoint.class, filterNoMatch);
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    void testFindWithFilterByExtensionType() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter filterByType = ExtensionFilter.newBuilder().extensionType(TestExtension.class).build();
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterByType);
++        assertEquals(1, list.size());
++
++        ExtensionFilter filterByUnrelatedType = ExtensionFilter.newBuilder().extensionType(String.class).build();
++        list = instance.find(TestExtensionPoint.class, filterByUnrelatedType);
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    void testFindWithCombinedFilters() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin2", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter filterCombined = ExtensionFilter.newBuilder()
++            .pluginId("plugin1")
++            .className("TestExtension")
++            .extensionType(TestExtension.class)
++            .build();
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filterCombined);
++        assertEquals(1, list.size());
++
++        ExtensionFilter filterMismatch = ExtensionFilter.newBuilder()
++            .pluginId("plugin1")
++            .className("NonExistent")
++            .build();
++        list = instance.find(TestExtensionPoint.class, filterMismatch);
++        assertEquals(0, list.size());
++
++        ExtensionFilter filterPlugin2WithTestExtension = ExtensionFilter.newBuilder()
++            .pluginId("plugin2")
++            .className("TestExtension")
++            .build();
++        list = instance.find(TestExtensionPoint.class, filterPlugin2WithTestExtension);
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    void testFindByFilterWithoutType() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter emptyFilter = ExtensionFilter.newBuilder().build();
++        List<ExtensionWrapper> list = instance.find(emptyFilter);
++        assertEquals(1, list.size());
++
++        ExtensionFilter filterByPlugin = ExtensionFilter.newBuilder().pluginId("plugin1").build();
++        list = instance.find(filterByPlugin);
++        assertEquals(1, list.size());
++
++        ExtensionFilter filterByClassName = ExtensionFilter.newBuilder().className("TestExtension").build();
++        list = instance.find(filterByClassName);
++        assertEquals(1, list.size());
++
++        ExtensionFilter filterByExtType = ExtensionFilter.newBuilder().extensionType(TestExtension.class).build();
++        list = instance.find(filterByExtType);
++        assertEquals(1, list.size());
++
++        ExtensionFilter filterNoMatch = ExtensionFilter.newBuilder().className("NonExistent").build();
++        list = instance.find(filterNoMatch);
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    void testFilteredResultsDoNotPolluteGlobalCache() {
++        final int[] readStoragesCount = {0};
++
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                readStoragesCount[0]++;
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter filter1 = ExtensionFilter.newBuilder().className("TestExtension").build();
++        List<ExtensionWrapper<TestExtensionPoint>> list1 = instance.find(TestExtensionPoint.class, filter1);
++        assertEquals(1, list1.size());
++
++        ExtensionFilter filter2 = ExtensionFilter.newBuilder().className("NonExistent").build();
++        List<ExtensionWrapper<TestExtensionPoint>> list2 = instance.find(TestExtensionPoint.class, filter2);
++        assertEquals(0, list2.size());
++
++        ExtensionFilter filter3 = ExtensionFilter.newBuilder().build();
++        List<ExtensionWrapper<TestExtensionPoint>> list3 = instance.find(TestExtensionPoint.class, filter3);
++        assertEquals(1, list3.size());
++
++        assertEquals(1, readStoragesCount[0], "Entries should only be read once (cached)");
++    }
++
++    @Test
++    void testCacheHitForUnfilteredAndFilteredCalls() {
++        final int[] readStoragesCount = {0};
++
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                readStoragesCount[0]++;
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        instance.find(TestExtensionPoint.class);
++        instance.find(TestExtensionPoint.class, "plugin1");
++        instance.find("plugin1");
++
++        ExtensionFilter filter = ExtensionFilter.newBuilder().pluginId("plugin1").build();
++        instance.find(TestExtensionPoint.class, filter);
++        instance.find(filter);
++
++        assertEquals(1, readStoragesCount[0], "All calls should share the same entries cache");
++    }
++
++    @Test
++    void testFilterWithNoMatchingResultsReturnsEmptyList() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        ExtensionFilter pluginIdFilter = ExtensionFilter.newBuilder().pluginId("nonexistent").build();
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, pluginIdFilter);
++        assertEquals(0, list.size());
++
++        ExtensionFilter classNameFilter = ExtensionFilter.newBuilder().className("completely.DifferentClass").build();
++        list = instance.find(TestExtensionPoint.class, classNameFilter);
++        assertEquals(0, list.size());
++
++        ExtensionFilter extTypeFilter = ExtensionFilter.newBuilder().extensionType(Thread.class).build();
++        list = instance.find(TestExtensionPoint.class, extTypeFilter);
++        assertEquals(0, list.size());
++
++        ExtensionFilter combinedFilter = ExtensionFilter.newBuilder()
++            .pluginId("plugin1")
++            .className("TestExtension")
++            .extensionType(Thread.class)
++            .build();
++        list = instance.find(TestExtensionPoint.class, combinedFilter);
++        assertEquals(0, list.size());
++    }
++
+ }

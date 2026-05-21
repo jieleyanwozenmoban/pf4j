@@ -376,6 +376,176 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
         return null;
     }
 
+    @Override
+    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+        log.debug("Finding extensions of extension point '{}' with filter {}", type.getName(), filter);
+        List<ExtensionWrapper<T>> result = new ArrayList<>();
+
+        Map<String, Set<String>> entries = getEntries();
+
+        if (filter.hasPluginId()) {
+            String pluginId = filter.getPluginId();
+            List<ExtensionWrapper<T>> pluginExtensions = findFilteredByPlugin(type, pluginId, filter);
+            result.addAll(pluginExtensions);
+        } else {
+            for (String pluginId : entries.keySet()) {
+                List<ExtensionWrapper<T>> pluginExtensions = findFilteredByPlugin(type, pluginId, filter);
+                result.addAll(pluginExtensions);
+            }
+        }
+
+        if (result.isEmpty()) {
+            log.debug("No extensions found for extension point '{}' with filter {}", type.getName(), filter);
+        } else {
+            log.debug("Found {} extensions for extension point '{}' with filter {}", result.size(), type.getName(), filter);
+        }
+
+        Collections.sort(result);
+        return result;
+    }
+
+    @Override
+    public List<ExtensionWrapper> find(ExtensionFilter filter) {
+        log.debug("Finding extensions with filter {}", filter);
+        List<ExtensionWrapper> result = new ArrayList<>();
+
+        Map<String, Set<String>> entries = getEntries();
+
+        if (filter.hasPluginId()) {
+            String pluginId = filter.getPluginId();
+            List<ExtensionWrapper> pluginExtensions = findFilteredByPlugin(pluginId, filter);
+            result.addAll(pluginExtensions);
+        } else {
+            for (String pluginId : entries.keySet()) {
+                List<ExtensionWrapper> pluginExtensions = findFilteredByPlugin(pluginId, filter);
+                result.addAll(pluginExtensions);
+            }
+        }
+
+        if (result.isEmpty()) {
+            log.debug("No extensions found with filter {}", filter);
+        } else {
+            log.debug("Found {} extensions with filter {}", result.size(), filter);
+        }
+
+        Collections.sort(result);
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> List<ExtensionWrapper<T>> findFilteredByPlugin(Class<T> type, String pluginId, ExtensionFilter filter) {
+        List<ExtensionWrapper<T>> result = new ArrayList<>();
+
+        Set<String> classNames = findClassNames(pluginId);
+        if (classNames.isEmpty()) {
+            return result;
+        }
+
+        if (pluginId != null) {
+            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
+            if (!pluginWrapper.getPluginState().isStarted()) {
+                return result;
+            }
+        }
+
+        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+
+        for (String className : classNames) {
+            if (filter.hasClassName() && !className.contains(filter.getClassName())) {
+                continue;
+            }
+
+            try {
+                if (isCheckForExtensionDependencies()) {
+                    ExtensionInfo extensionInfo = getExtensionInfo(className, classLoader);
+                    if (extensionInfo == null) {
+                        log.error("No extension annotation was found for '{}'", className);
+                        continue;
+                    }
+
+                    List<String> missingPluginIds = new ArrayList<>();
+                    for (String requiredPluginId : extensionInfo.getPlugins()) {
+                        PluginWrapper requiredPlugin = pluginManager.getPlugin(requiredPluginId);
+                        if (requiredPlugin == null || !requiredPlugin.getPluginState().isStarted()) {
+                            missingPluginIds.add(requiredPluginId);
+                        }
+                    }
+                    if (!missingPluginIds.isEmpty()) {
+                        StringBuilder missing = new StringBuilder();
+                        for (String missingPluginId : missingPluginIds) {
+                            if (missing.length() > 0) missing.append(", ");
+                            missing.append(missingPluginId);
+                        }
+                        log.trace("Extension '{}' is ignored due to missing plugins: {}", className, missing);
+                        continue;
+                    }
+                }
+
+                Class<?> extensionClass = classLoader.loadClass(className);
+
+                if (type.isAssignableFrom(extensionClass)) {
+                    if (filter.hasExtensionType() && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
+                        log.trace("Extension '{}' excluded by extensionType filter '{}'", className, filter.getExtensionType().getName());
+                        continue;
+                    }
+
+                    ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
+                    result.add(extensionWrapper);
+                } else {
+                    if (checkDifferentClassLoaders(type, extensionClass)) {
+                        log.error("Different class loaders: '{}' (E) and '{}' (EP)", extensionClass.getClassLoader(), type.getClassLoader());
+                    }
+                }
+            } catch (ClassNotFoundException | NoClassDefFoundError e) {
+                log.error(e.getMessage(), e);
+            }
+        }
+
+        Collections.sort(result);
+        return result;
+    }
+
+    private List<ExtensionWrapper> findFilteredByPlugin(String pluginId, ExtensionFilter filter) {
+        List<ExtensionWrapper> result = new ArrayList<>();
+
+        Set<String> classNames = findClassNames(pluginId);
+        if (classNames.isEmpty()) {
+            return result;
+        }
+
+        if (pluginId != null) {
+            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
+            if (!pluginWrapper.getPluginState().isStarted()) {
+                return result;
+            }
+        }
+
+        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+
+        for (String className : classNames) {
+            if (filter.hasClassName() && !className.contains(filter.getClassName())) {
+                continue;
+            }
+
+            try {
+                Class<?> extensionClass = classLoader.loadClass(className);
+
+                if (filter.hasExtensionType() && !filter.getExtensionType().isAssignableFrom(extensionClass)) {
+                    log.trace("Extension '{}' excluded by extensionType filter '{}'", className, filter.getExtensionType().getName());
+                    continue;
+                }
+
+                ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
+                result.add(extensionWrapper);
+            } catch (ClassNotFoundException | NoClassDefFoundError e) {
+                log.error(e.getMessage(), e);
+            }
+        }
+
+        Collections.sort(result);
+        return result;
+    }
+
     boolean checkDifferentClassLoaders(Class<?> type, Class<?> extensionClass) {
         ClassLoader typeClassLoader = type.getClassLoader(); // class loader of extension point
         ClassLoader extensionClassLoader = extensionClass.getClassLoader();
