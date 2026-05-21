@@ -1,0 +1,120 @@
+diff --git a/src/main/java/org/pf4j/DefaultPluginManager.java b/src/main/java/org/pf4j/DefaultPluginManager.java
+index 39ca972..6669e15 100755
+--- a/src/main/java/org/pf4j/DefaultPluginManager.java
++++ b/src/main/java/org/pf4j/DefaultPluginManager.java
+@@ -15,12 +15,14 @@
+  */
+ package org.pf4j;
+ 
+-import org.pf4j.util.FileUtils;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ 
++import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.nio.file.Paths;
++import java.util.ArrayList;
++import java.util.Collections;
+ import java.util.List;
+ 
+ /**
+@@ -119,24 +121,90 @@ public class DefaultPluginManager extends AbstractPluginManager {
+         log.info("PF4J version {} in '{}' mode", getVersion(), getRuntimeMode());
+     }
+ 
++    private List<PluginLoadingProcessor> pluginLoadingProcessors;
++
++    /**
++     * Create the list of {@link PluginLoadingProcessor}s to be used for single-plugin loading.
++     * <p>
++     * The default chain includes path validation, archive expansion, descriptor resolution,
++     * class loader creation, plugin wrapper creation, and dependency resolution.
++     * <p>
++     * Override this method to customize the loading pipeline.
++     *
++     * @return an ordered list of processors
++     */
++    protected List<PluginLoadingProcessor> createPluginLoadingProcessors() {
++        List<PluginLoadingProcessor> processors = new ArrayList<>();
++        processors.add(new ArchiveExpansionProcessor());
++        processors.add(new PluginDescriptorResolutionProcessor());
++        processors.add(new PluginClassLoaderCreationProcessor());
++        processors.add(new PluginWrapperCreationProcessor());
++        processors.add(new DependencyResolutionProcessor());
++        return processors;
++    }
++
++    /**
++     * Returns the plugin loading processor chain, creating it lazily if needed.
++     * The returned list is unmodifiable.
++     */
++    protected List<PluginLoadingProcessor> getPluginLoadingProcessors() {
++        if (pluginLoadingProcessors == null) {
++            pluginLoadingProcessors = Collections.unmodifiableList(createPluginLoadingProcessors());
++        }
++        return pluginLoadingProcessors;
++    }
++
++    /**
++     * Load a plugin from disk using the processor chain.
++     * The path is validated, zip files are expanded, the descriptor is resolved,
++     * a class loader is created, the plugin wrapper is initialized, and
++     * dependencies are resolved.
++     *
++     * @param pluginPath plugin location on disk
++     * @return the pluginId of the loaded plugin
++     * @throws IllegalArgumentException if the path is null or does not exist
++     * @throws PluginRuntimeException if problems during load
++     */
++    @Override
++    public String loadPlugin(Path pluginPath) {
++        if ((pluginPath == null) || Files.notExists(pluginPath)) {
++            throw new IllegalArgumentException(String.format("Specified plugin %s does not exist!", pluginPath));
++        }
++
++        log.debug("Loading plugin from '{}'", pluginPath);
++
++        PluginLoadingContext context = new PluginLoadingContext();
++        context.setPluginPath(pluginPath);
++
++        for (PluginLoadingProcessor processor : getPluginLoadingProcessors()) {
++            processor.process(this, context);
++        }
++
++        return context.getPluginWrapper().getDescriptor().getPluginId();
++    }
++
+     /**
+-     * Load a plugin from disk. If the path is a zip file, first unpack.
++     * Load a plugin from path without resolving dependencies.
++     * The dependency resolution step is skipped here because
++     * {@link #loadPlugins()} calls {@code resolvePlugins()} once after loading all plugins.
+      *
+      * @param pluginPath plugin location on disk
+-     * @return PluginWrapper for the loaded plugin or null if not loaded
++     * @return PluginWrapper for the loaded plugin
+      * @throws PluginRuntimeException if problems during load
+      */
+     @Override
+     protected PluginWrapper loadPluginFromPath(Path pluginPath) {
+-        // First unzip any ZIP files
+-        try {
+-            pluginPath = FileUtils.expandIfZip(pluginPath);
+-        } catch (Exception e) {
+-            log.warn("Failed to unzip " + pluginPath, e);
+-            return null;
++        PluginLoadingContext context = new PluginLoadingContext();
++        context.setPluginPath(pluginPath);
++
++        for (PluginLoadingProcessor processor : getPluginLoadingProcessors()) {
++            if (processor instanceof DependencyResolutionProcessor) {
++                continue;
++            }
++            processor.process(this, context);
+         }
+ 
+-        return super.loadPluginFromPath(pluginPath);
++        return context.getPluginWrapper();
+     }
+ 
+ }
