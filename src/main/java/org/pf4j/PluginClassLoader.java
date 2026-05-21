@@ -280,6 +280,12 @@ public class PluginClassLoader extends URLClassLoader {
 
     /**
      * Loads the class with the specified name from the dependencies of the plugin.
+     * <p>
+     * This method searches only the dependency plugins' own classpaths and their transitive
+     * dependencies, without falling back to the application (parent) class loader.
+     * This ensures that the APPLICATION source is consulted only when the caller's
+     * {@link ClassLoadingStrategy} explicitly includes it as a separate step,
+     * preventing premature or duplicate parent delegation during dependency resolution.
      *
      * @param className the name of the class
      * @return the loaded class
@@ -290,19 +296,56 @@ public class PluginClassLoader extends URLClassLoader {
         for (PluginDependency dependency : dependencies) {
             ClassLoader classLoader = pluginManager.getPluginClassLoader(dependency.getPluginId());
 
-            // If the dependency is marked as optional, its class loader might not be available.
             if (classLoader == null && dependency.isOptional()) {
                 continue;
             }
 
-            try {
-                return classLoader.loadClass(className);
-            } catch (ClassNotFoundException e) {
-                // try next dependency
+            Class<?> c = null;
+            if (classLoader instanceof PluginClassLoader) {
+                c = ((PluginClassLoader) classLoader).loadClassFromPlugin(className);
+            } else {
+                try {
+                    c = classLoader.loadClass(className);
+                } catch (ClassNotFoundException e) {
+                    // try next dependency
+                }
+            }
+
+            if (c != null) {
+                return c;
             }
         }
 
         return null;
+    }
+
+    /**
+     * Loads the class from this plugin's own classpath and its dependencies,
+     * without falling back to the application (parent) class loader.
+     * <p>
+     * This is used by {@link #loadClassFromDependencies(String)} to isolate
+     * dependency class resolution from the host APPLICATION classpath,
+     * ensuring that each step in the {@link ClassLoadingStrategy} is
+     * independently controlled by the caller's strategy.
+     *
+     * @param className the name of the class
+     * @return the loaded class, or {@code null} if not found
+     */
+    Class<?> loadClassFromPlugin(String className) {
+        synchronized (getClassLoadingLock(className)) {
+            Class<?> loadedClass = findLoadedClass(className);
+            if (loadedClass != null) {
+                return loadedClass;
+            }
+
+            try {
+                return findClass(className);
+            } catch (ClassNotFoundException e) {
+                // not found in this plugin's own classpath
+            }
+
+            return loadClassFromDependencies(className);
+        }
     }
 
     /**

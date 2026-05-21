@@ -26,6 +26,8 @@ import org.pf4j.test.JavaSources;
 import org.pf4j.test.PluginZip;
 import org.pf4j.util.FileUtils;
 
+import com.google.testing.compile.JavaFileObjects;
+
 import javax.tools.JavaFileObject;
 import java.io.File;
 import java.io.IOException;
@@ -457,6 +459,187 @@ class PluginClassLoaderTest {
 
         // Verify that test exclusions still work
         assertFalse(customClassLoader.shouldDelegateToParent("org.pf4j.test.TestExtension"));
+    }
+
+    @Test
+    void parentLastLoadClassPluginOverridesDependencyAndHost() throws Exception {
+        JavaFileObject dependencyVersion = JavaFileObjects.forSourceLines("ConflictClass",
+            "package org.pf4j.test;",
+            "public class ConflictClass {",
+            "    public String getValue() { return \"dependency\"; }",
+            "}");
+        JavaFileObject pluginVersion = JavaFileObjects.forSourceLines("ConflictClass",
+            "package org.pf4j.test;",
+            "public class ConflictClass {",
+            "    public String getValue() { return \"plugin\"; }",
+            "}");
+
+        List<JavaFileObject> dependencyCompiled = JavaSources.compileAll(dependencyVersion);
+        List<JavaFileObject> pluginCompiled = JavaSources.compileAll(pluginVersion);
+
+        // Set up dependency plugin with its own ConflictClass
+        DefaultPluginDescriptor depDescriptor = new DefaultPluginDescriptor()
+            .setPluginId("conflictDep")
+            .setPluginVersion("1.0.0")
+            .setDependencies("");
+        PluginClassLoader depClassLoader = new PluginClassLoader(pluginManager, depDescriptor, getClass().getClassLoader());
+        pluginManager.addClassLoader("conflictDep", depClassLoader);
+        Path depClassesDir = Files.createTempDirectory(pluginsPath, "conflictDepClasses");
+        for (JavaFileObject compiled : dependencyCompiled) {
+            Path classFile = depClassesDir.resolve("org/pf4j/test/ConflictClass.class");
+            Files.createDirectories(classFile.getParent());
+            Files.write(classFile, JavaFileObjectUtils.getAllBytes(compiled));
+        }
+        depClassLoader.addFile(depClassesDir.toFile());
+
+        // Set up plugin with its own ConflictClass, depending on conflictDep
+        DefaultPluginDescriptor pluginDesc = new DefaultPluginDescriptor()
+            .setPluginId("conflictPlugin")
+            .setPluginVersion("1.0.0")
+            .setDependencies("conflictDep");
+        PluginClassLoader pluginClassLoader = new PluginClassLoader(pluginManager, pluginDesc, getClass().getClassLoader());
+        pluginManager.addClassLoader("conflictPlugin", pluginClassLoader);
+        Path pluginClassesDir = Files.createTempDirectory(pluginsPath, "conflictPluginClasses");
+        for (JavaFileObject compiled : pluginCompiled) {
+            Path classFile = pluginClassesDir.resolve("org/pf4j/test/ConflictClass.class");
+            Files.createDirectories(classFile.getParent());
+            Files.write(classFile, JavaFileObjectUtils.getAllBytes(compiled));
+        }
+        pluginClassLoader.addFile(pluginClassesDir.toFile());
+
+        // PDA mode: plugin version should be loaded (PLUGIN > DEPENDENCIES > APPLICATION)
+        Class<?> loadedClass = pluginClassLoader.loadClass("org.pf4j.test.ConflictClass");
+        Object instance = loadedClass.getDeclaredConstructor().newInstance();
+        String value = (String) loadedClass.getMethod("getValue").invoke(instance);
+        assertEquals("plugin", value, "PDA mode should load plugin version first");
+
+        depClassLoader.close();
+        pluginClassLoader.close();
+    }
+
+    @Test
+    void parentLastLoadClassDependencyOverridesHostWhenPluginAbsent() throws Exception {
+        JavaFileObject dependencyVersion = JavaFileObjects.forSourceLines("ConflictClass",
+            "package org.pf4j.test;",
+            "public class ConflictClass {",
+            "    public String getValue() { return \"dependency\"; }",
+            "}");
+
+        List<JavaFileObject> dependencyCompiled = JavaSources.compileAll(dependencyVersion);
+
+        // Set up dependency plugin with ConflictClass
+        DefaultPluginDescriptor depDescriptor = new DefaultPluginDescriptor()
+            .setPluginId("depOnly")
+            .setPluginVersion("1.0.0")
+            .setDependencies("");
+        PluginClassLoader depClassLoader = new PluginClassLoader(pluginManager, depDescriptor, getClass().getClassLoader());
+        pluginManager.addClassLoader("depOnly", depClassLoader);
+        Path depClassesDir = Files.createTempDirectory(pluginsPath, "depOnlyClasses");
+        for (JavaFileObject compiled : dependencyCompiled) {
+            Path classFile = depClassesDir.resolve("org/pf4j/test/ConflictClass.class");
+            Files.createDirectories(classFile.getParent());
+            Files.write(classFile, JavaFileObjectUtils.getAllBytes(compiled));
+        }
+        depClassLoader.addFile(depClassesDir.toFile());
+
+        // Set up plugin WITHOUT ConflictClass, depending on depOnly
+        DefaultPluginDescriptor pluginDesc = new DefaultPluginDescriptor()
+            .setPluginId("noConflictPlugin")
+            .setPluginVersion("1.0.0")
+            .setDependencies("depOnly");
+        PluginClassLoader pluginClassLoader = new PluginClassLoader(pluginManager, pluginDesc, getClass().getClassLoader());
+        pluginManager.addClassLoader("noConflictPlugin", pluginClassLoader);
+
+        // PDA mode: dependency version should be loaded (DEPENDENCIES before APPLICATION)
+        Class<?> loadedClass = pluginClassLoader.loadClass("org.pf4j.test.ConflictClass");
+        Object instance = loadedClass.getDeclaredConstructor().newInstance();
+        String value = (String) loadedClass.getMethod("getValue").invoke(instance);
+        assertEquals("dependency", value, "PDA mode should load dependency version before host version");
+
+        depClassLoader.close();
+        pluginClassLoader.close();
+    }
+
+    @Test
+    void parentLastLoadClassHostVersionAsLastFallback() throws Exception {
+        // Set up plugin WITHOUT ConflictClass, no dependencies
+        DefaultPluginDescriptor pluginDesc = new DefaultPluginDescriptor()
+            .setPluginId("hostOnly")
+            .setPluginVersion("1.0.0")
+            .setDependencies("");
+        PluginClassLoader pluginClassLoader = new PluginClassLoader(pluginManager, pluginDesc, getClass().getClassLoader());
+        pluginManager.addClassLoader("hostOnly", pluginClassLoader);
+
+        // PDA mode: host version should be loaded (APPLICATION as last fallback)
+        Class<?> loadedClass = pluginClassLoader.loadClass("org.pf4j.test.ConflictClass");
+        Object instance = loadedClass.getDeclaredConstructor().newInstance();
+        String value = (String) loadedClass.getMethod("getValue").invoke(instance);
+        assertEquals("parent", value, "PDA mode should fall back to host version when nothing else has it");
+
+        pluginClassLoader.close();
+    }
+
+    @Test
+    void loadClassFromPluginDoesNotFallbackToApplication() throws Exception {
+        JavaFileObject dependencyVersion = JavaFileObjects.forSourceLines("ConflictClass",
+            "package org.pf4j.test;",
+            "public class ConflictClass {",
+            "    public String getValue() { return \"depOnly\"; }",
+            "}");
+
+        List<JavaFileObject> dependencyCompiled = JavaSources.compileAll(dependencyVersion);
+
+        // Set up dependency plugin with ConflictClass
+        DefaultPluginDescriptor depDescriptor = new DefaultPluginDescriptor()
+            .setPluginId("depPlugin")
+            .setPluginVersion("1.0.0")
+            .setDependencies("");
+        PluginClassLoader depClassLoader = new PluginClassLoader(pluginManager, depDescriptor, getClass().getClassLoader());
+        pluginManager.addClassLoader("depPlugin", depClassLoader);
+        Path depClassesDir = Files.createTempDirectory(pluginsPath, "depPluginClasses");
+        for (JavaFileObject compiled : dependencyCompiled) {
+            Path classFile = depClassesDir.resolve("org/pf4j/test/ConflictClass.class");
+            Files.createDirectories(classFile.getParent());
+            Files.write(classFile, JavaFileObjectUtils.getAllBytes(compiled));
+        }
+        depClassLoader.addFile(depClassesDir.toFile());
+
+        // Set up plugin depending on depPlugin, WITHOUT its own ConflictClass
+        DefaultPluginDescriptor pluginDesc = new DefaultPluginDescriptor()
+            .setPluginId("verifyPlugin")
+            .setPluginVersion("1.0.0")
+            .setDependencies("depPlugin");
+        PluginClassLoader pluginClassLoader = new PluginClassLoader(pluginManager, pluginDesc, getClass().getClassLoader());
+        pluginManager.addClassLoader("verifyPlugin", pluginClassLoader);
+
+        // Directly test loadClassFromPlugin on the dependency classloader
+        // It should find the dependency's own version without falling back to APPLICATION
+        Class<?> loadedClass = depClassLoader.loadClassFromPlugin("org.pf4j.test.ConflictClass");
+        assertNotNull(loadedClass, "loadClassFromPlugin should find class in own classpath");
+        Object instance = loadedClass.getDeclaredConstructor().newInstance();
+        String value = (String) loadedClass.getMethod("getValue").invoke(instance);
+        assertEquals("depOnly", value, "loadClassFromPlugin should return the plugin's own version");
+
+        // Now test via loadClass in PDA mode: dependency should be used, not host
+        Class<?> viaLoadClass = pluginClassLoader.loadClass("org.pf4j.test.ConflictClass");
+        Object viaInstance = viaLoadClass.getDeclaredConstructor().newInstance();
+        String viaValue = (String) viaLoadClass.getMethod("getValue").invoke(viaInstance);
+        assertEquals("depOnly", value, "PDA loadClass should resolve from dependency, not host");
+
+        depClassLoader.close();
+        pluginClassLoader.close();
+    }
+
+    @Test
+    void loadClassFromPluginReturnsNullForMissingClass() {
+        DefaultPluginDescriptor pluginDesc = new DefaultPluginDescriptor()
+            .setPluginId("emptyPlugin")
+            .setPluginVersion("1.0.0")
+            .setDependencies("");
+        PluginClassLoader pluginClassLoader = new PluginClassLoader(pluginManager, pluginDesc, getClass().getClassLoader());
+
+        assertNull(pluginClassLoader.loadClassFromPlugin("com.nonexistent.MissingClass"),
+            "loadClassFromPlugin should return null for classes not in plugin or dependencies");
     }
 
     static class TestPluginManager extends DefaultPluginManager {
