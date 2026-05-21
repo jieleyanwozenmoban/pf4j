@@ -27,15 +27,19 @@ import org.pf4j.test.TestExtension;
 import org.pf4j.test.TestExtensionPoint;
 
 import javax.tools.JavaFileObject;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -67,15 +71,9 @@ class AbstractExtensionFinderTest {
     @AfterEach
     public void tearDown() {
         pluginManager = null;
-        // Force garbage collection to clean up ClassLoaders from dynamic class loading tests
-        // This helps prevent ClassLoader conflicts, especially on Java 11
         System.gc();
-        // TODO: Test is still flaky, needs further investigation
     }
 
-    /**
-     * Test of {@link AbstractExtensionFinder#find(Class)}.
-     */
     @Test
     void testFindFailType() {
         ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
@@ -95,9 +93,6 @@ class AbstractExtensionFinderTest {
         assertEquals(0, list.size());
     }
 
-    /**
-     * Test of {@link AbstractExtensionFinder#find(Class)}.
-     */
     @Test
     void testFindFromClasspath() {
         ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
@@ -124,9 +119,6 @@ class AbstractExtensionFinderTest {
         assertEquals(1, list.size());
     }
 
-    /**
-     * Test of {@link AbstractExtensionFinder#find(Class, String)}.
-     */
     @Test
     void testFindFromPlugin() {
         ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
@@ -159,13 +151,9 @@ class AbstractExtensionFinderTest {
         assertEquals(1, list.size());
 
         list = instance.find(TestExtensionPoint.class, "plugin2");
-        // "0" because the status of "plugin2" is STOPPED => no extensions
         assertEquals(0, list.size());
     }
 
-    /**
-     * Test of {@link AbstractExtensionFinder#findClassNames(String)}.
-     */
     @Test
     void testFindClassNames() {
         ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
@@ -202,12 +190,78 @@ class AbstractExtensionFinderTest {
         assertEquals(1, result.size());
     }
 
-    /**
-     * Test of {@link org.pf4j.AbstractExtensionFinder#find(java.lang.String)}.
-     */
+    @Test
+    void testFindClassNamesWithFilterUsesDedicatedCache() {
+        AtomicInteger filteredEntriesCreated = new AtomicInteger();
+        AbstractExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+                entries.put("plugin1", linkedSet(TestExtension.class.getName(), SpecializedTestExtension.class.getName()));
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+            @Override
+            protected Map<String, Set<String>> createFilteredEntries(ExtensionFilter filter) {
+                filteredEntriesCreated.incrementAndGet();
+                return super.createFilteredEntries(filter);
+            }
+
+        };
+
+        ExtensionFilter filter = ExtensionFilter.builder()
+            .pluginId("plugin1")
+            .extensionClassName(SpecializedTestExtension.class.getName())
+            .build();
+
+        Set<String> first = instance.findClassNames("plugin1", filter);
+        Set<String> second = instance.findClassNames("plugin1", filter);
+        Set<String> unfiltered = instance.findClassNames("plugin1");
+
+        assertEquals(Collections.singleton(SpecializedTestExtension.class.getName()), first);
+        assertEquals(first, second);
+        assertEquals(1, filteredEntriesCreated.get());
+        assertEquals(2, unfiltered.size());
+        assertTrue(unfiltered.contains(TestExtension.class.getName()));
+        assertTrue(unfiltered.contains(SpecializedTestExtension.class.getName()));
+    }
+
+    @Test
+    void testFindWithCombinedFilters() {
+        ExtensionFinder instance = createFilterableFinder();
+        ExtensionFilter filter = ExtensionFilter.builder()
+            .pluginId("plugin1")
+            .extensionClassName(SpecializedTestExtension.class.getName())
+            .extensionType(TestExtension.class)
+            .build();
+
+        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filter);
+
+        assertEquals(1, list.size());
+        assertSame(SpecializedTestExtension.class, list.get(0).getDescriptor().extensionClass);
+    }
+
+    @Test
+    void testFindWithFilterNoResult() {
+        ExtensionFinder instance = createFilterableFinder();
+        ExtensionFilter filter = ExtensionFilter.builder()
+            .pluginId("plugin1")
+            .extensionClassName(TestExtension.class.getName())
+            .extensionType(SpecializedTestExtension.class)
+            .build();
+
+        assertTrue(instance.find(TestExtensionPoint.class, filter).isEmpty());
+        assertTrue(instance.find("plugin1", filter).isEmpty());
+    }
+
     @Test
     void testFindExtensionWrappersFromPluginId() {
-        // complicate the test to show hot to deal with dynamic Java classes (generated at runtime from sources)
         PluginWrapper plugin3 = mock(PluginWrapper.class);
         JavaFileObject object = JavaSources.compile(DefaultExtensionFactoryTest.FailTestExtension);
         JavaFileObjectClassLoader classLoader = new JavaFileObjectClassLoader();
@@ -280,7 +334,6 @@ class AbstractExtensionFinderTest {
         Assertions.assertNull(extension);
     }
 
-    // This is a regression test, as this caused an StackOverflowError with the previous implementation
     @Test
     public void runningOnNonExtensionKotlinClassDoesNotThrowException() {
         Extension result = AbstractExtensionFinder.findExtensionAnnotation(Sequence.class);
@@ -310,6 +363,32 @@ class AbstractExtensionFinderTest {
         Class<?> extensionClass = new JavaFileObjectClassLoader().load(generatedFiles).get(JavaSources.WHAZZUP_GREETING_CLASS_NAME);
 
         assertTrue(extensionFinder.checkDifferentClassLoaders(extensionPointClass, extensionClass));
+    }
+
+    private ExtensionFinder createFilterableFinder() {
+        return new AbstractExtensionFinder(pluginManager) {
+
+            @Override
+            public Map<String, Set<String>> readPluginsStorages() {
+                Map<String, Set<String>> entries = new LinkedHashMap<>();
+                entries.put("plugin1", linkedSet(TestExtension.class.getName(), SpecializedTestExtension.class.getName()));
+                return entries;
+            }
+
+            @Override
+            public Map<String, Set<String>> readClasspathStorages() {
+                return Collections.emptyMap();
+            }
+
+        };
+    }
+
+    private static Set<String> linkedSet(String... values) {
+        return new LinkedHashSet<>(Arrays.asList(values));
+    }
+
+    @Extension
+    public static class SpecializedTestExtension extends TestExtension {
     }
 
 }

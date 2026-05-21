@@ -74,6 +74,29 @@ public class AbstractPluginManagerTest {
     }
 
     @Test
+    public void getExtensionsByTypeAndFilter() {
+        PluginWrapper plugin1 = mock(PluginWrapper.class);
+        when(plugin1.getPluginId()).thenReturn("plugin1");
+
+        PluginWrapper plugin2 = mock(PluginWrapper.class);
+        when(plugin2.getPluginId()).thenReturn("plugin2");
+
+        doReturn(Arrays.asList(new TestExtension(), new FilteredTestExtension())).when(pluginManager).getExtensions(TestExtensionPoint.class);
+        doReturn(plugin1).when(pluginManager).whichPlugin(TestExtension.class);
+        doReturn(plugin2).when(pluginManager).whichPlugin(FilteredTestExtension.class);
+
+        ExtensionFilter filter = ExtensionFilter.builder()
+            .pluginId("plugin2")
+            .extensionClassName(FilteredTestExtension.class.getName())
+            .extensionType(TestExtension.class)
+            .build();
+
+        List<TestExtensionPoint> extensions = pluginManager.getExtensions(TestExtensionPoint.class, filter);
+        assertEquals(1, extensions.size());
+        assertSame(FilteredTestExtension.class, extensions.get(0).getClass());
+    }
+
+    @Test
     public void getVersion() {
         assertNotEquals("0.0.0", pluginManager.getVersion());
     }
@@ -130,7 +153,6 @@ public class AbstractPluginManagerTest {
         pluginManager.addPlugin(pluginWrapper2);
         pluginManager.resolveDependencies();
 
-        // reset the mock to not count the explicit call of resolveDependencies
         reset(pluginManager);
 
         pluginManager.unloadPlugin("plugin2", true);
@@ -172,6 +194,10 @@ public class AbstractPluginManagerTest {
         pluginWrapper.setPluginFactory(wrapper -> plugin);
 
         return pluginWrapper;
+    }
+
+    @Extension
+    public static class FilteredTestExtension extends TestExtension {
     }
 
     static abstract class AbstractPluginManagerWithDefaultVersionManager extends AbstractPluginManager {

@@ -16,6 +16,7 @@
 package org.pf4j;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -156,11 +157,59 @@ public interface PluginManager {
 
     List<Class<?>> getExtensionClasses(String pluginId);
 
+    default List<Class<?>> getExtensionClasses(String pluginId, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
+        if (effectiveFilter.isEmpty()) {
+            return getExtensionClasses(pluginId);
+        }
+
+        List<Class<?>> extensionClasses = new ArrayList<>();
+        for (Class<?> extensionClass : getExtensionClasses(pluginId)) {
+            if (effectiveFilter.matches(this, extensionClass)) {
+                extensionClasses.add(extensionClass);
+            }
+        }
+
+        return extensionClasses;
+    }
+
     <T> List<Class<? extends T>> getExtensionClasses(Class<T> type);
+
+    default <T> List<Class<? extends T>> getExtensionClasses(Class<T> type, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
+        if (effectiveFilter.isEmpty()) {
+            return getExtensionClasses(type);
+        }
+
+        List<Class<? extends T>> extensionClasses = new ArrayList<>();
+        for (Class<? extends T> extensionClass : getExtensionClasses(type)) {
+            if (effectiveFilter.matches(this, extensionClass)) {
+                extensionClasses.add(extensionClass);
+            }
+        }
+
+        return extensionClasses;
+    }
 
     <T> List<Class<? extends T>> getExtensionClasses(Class<T> type, String pluginId);
 
     <T> List<T> getExtensions(Class<T> type);
+
+    default <T> List<T> getExtensions(Class<T> type, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
+        if (effectiveFilter.isEmpty()) {
+            return getExtensions(type);
+        }
+
+        List<T> extensions = new ArrayList<>();
+        for (T extension : getExtensions(type)) {
+            if (effectiveFilter.matches(this, extension.getClass())) {
+                extensions.add(extension);
+            }
+        }
+
+        return extensions;
+    }
 
     <T> List<T> getExtensions(Class<T> type, String pluginId);
 
@@ -171,6 +220,22 @@ public interface PluginManager {
      * @return the extensions for the plugin
      */
     List getExtensions(String pluginId);
+
+    default List getExtensions(String pluginId, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
+        if (effectiveFilter.isEmpty()) {
+            return getExtensions(pluginId);
+        }
+
+        List extensions = new ArrayList();
+        for (Object extension : getExtensions(pluginId)) {
+            if (effectiveFilter.matches(this, extension.getClass())) {
+                extensions.add(extension);
+            }
+        }
+
+        return extensions;
+    }
 
     Set<String> getExtensionClassNames(String pluginId);
 

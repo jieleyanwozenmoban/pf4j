@@ -30,6 +30,10 @@ public interface ExtensionFinder {
      */
     <T> List<ExtensionWrapper<T>> find(Class<T> type);
 
+    default <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+        return find(type);
+    }
+
     /**
      * Retrieves a list with all extensions found for an extension point and a plugin.
      */
@@ -40,9 +44,17 @@ public interface ExtensionFinder {
      */
     List<ExtensionWrapper> find(String pluginId);
 
+    default List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
+        return find(pluginId);
+    }
+
     /**
      * Retrieves a list with all extension class names found for a plugin.
      */
     Set<String> findClassNames(String pluginId);
+
+    default Set<String> findClassNames(String pluginId, ExtensionFilter filter) {
+        return findClassNames(pluginId);
+    }
 
 }

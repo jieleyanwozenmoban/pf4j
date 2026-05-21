@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,8 +38,9 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
     private static final Logger log = LoggerFactory.getLogger(AbstractExtensionFinder.class);
 
     protected PluginManager pluginManager;
-    protected volatile Map<String, Set<String>> entries; // cache by pluginId
-    protected volatile Map<String, ExtensionInfo> extensionInfos; // cache extension infos by class name
+    protected volatile Map<String, Set<String>> entries;
+    protected volatile Map<ExtensionFilter, Map<String, Set<String>>> filteredEntries;
+    protected volatile Map<String, ExtensionInfo> extensionInfos;
     protected Boolean checkForExtensionDependencies = null;
 
     protected AbstractExtensionFinder(PluginManager pluginManager) {
@@ -51,15 +53,18 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
 
     @Override
     public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
-        log.debug("Finding extensions of extension point '{}'", type.getName());
-        Map<String, Set<String>> entries = getEntries();
+        return find(type, ExtensionFilter.empty());
+    }
+
+    @Override
+    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = normalizeFilter(filter);
+        log.debug("Finding extensions of extension point '{}' using filter '{}'", type.getName(), effectiveFilter);
+        Map<String, Set<String>> entries = getEntries(effectiveFilter);
         List<ExtensionWrapper<T>> result = new ArrayList<>();
 
-        // add extensions found in classpath and plugins
         for (String pluginId : entries.keySet()) {
-            // classpath's extensions <=> pluginId = null
-            List<ExtensionWrapper<T>> pluginExtensions = find(type, pluginId);
-            result.addAll(pluginExtensions);
+            result.addAll(find(type, pluginId, effectiveFilter));
         }
 
         if (result.isEmpty()) {
@@ -68,20 +73,27 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
             log.debug("Found {} extensions for extension point '{}'", result.size(), type.getName());
         }
 
-        // sort by "ordinal" property
         Collections.sort(result);
 
         return result;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
-        log.debug("Finding extensions of extension point '{}' for plugin '{}'", type.getName(), pluginId);
+        return find(type, pluginId, ExtensionFilter.empty());
+    }
+
+    @SuppressWarnings("unchecked")
+    protected <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = normalizeFilter(filter);
+        log.debug("Finding extensions of extension point '{}' for plugin '{}' using filter '{}'", type.getName(), pluginId, effectiveFilter);
         List<ExtensionWrapper<T>> result = new ArrayList<>();
 
-        // classpath's extensions <=> pluginId = null
-        Set<String> classNames = findClassNames(pluginId);
+        if (!effectiveFilter.matches(pluginId)) {
+            return result;
+        }
+
+        Set<String> classNames = findClassNames(pluginId, effectiveFilter);
         if (classNames.isEmpty()) {
             return result;
         }
@@ -97,27 +109,17 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
             log.trace("Checking extensions from classpath");
         }
 
-        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+        ClassLoader classLoader = getClassLoader(pluginId);
 
         for (String className : classNames) {
             try {
                 if (isCheckForExtensionDependencies()) {
-                    // Load extension annotation without initializing the class itself.
-                    //
-                    // If optional dependencies are used, the class loader might not be able
-                    // to load the extension class because of missing optional dependencies.
-                    //
-                    // Therefore, we're extracting the extension annotation via asm, in order
-                    // to extract the required plugins for an extension. Only if all required
-                    // plugins are currently available and started, the corresponding
-                    // extension is loaded through the class loader.
                     ExtensionInfo extensionInfo = getExtensionInfo(className, classLoader);
                     if (extensionInfo == null) {
                         log.error("No extension annotation was found for '{}'", className);
                         continue;
                     }
 
-                    // Make sure, that all plugins required by this extension are available.
                     List<String> missingPluginIds = new ArrayList<>();
                     for (String requiredPluginId : extensionInfo.getPlugins()) {
                         PluginWrapper requiredPlugin = pluginManager.getPlugin(requiredPluginId);
@@ -128,7 +130,9 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
                     if (!missingPluginIds.isEmpty()) {
                         StringBuilder missing = new StringBuilder();
                         for (String missingPluginId : missingPluginIds) {
-                            if (missing.length() > 0) missing.append(", ");
+                            if (missing.length() > 0) {
+                                missing.append(", ");
+                            }
                             missing.append(missingPluginId);
                         }
                         log.trace("Extension '{}' is ignored due to missing plugins: {}", className, missing);
@@ -138,6 +142,11 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
 
                 log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
                 Class<?> extensionClass = classLoader.loadClass(className);
+
+                if (!effectiveFilter.matches(pluginId, className, extensionClass)) {
+                    log.trace("'{}' is ignored by filter '{}'", className, effectiveFilter);
+                    continue;
+                }
 
                 log.debug("Checking extension type '{}'", className);
                 if (type.isAssignableFrom(extensionClass)) {
@@ -161,7 +170,6 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
             log.debug("Found {} extensions for extension point '{}'", result.size(), type.getName());
         }
 
-        // sort by "ordinal" property
         Collections.sort(result);
 
         return result;
@@ -169,10 +177,20 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
 
     @Override
     public List<ExtensionWrapper> find(String pluginId) {
-        log.debug("Finding extensions from plugin '{}'", pluginId);
+        return find(pluginId, ExtensionFilter.empty());
+    }
+
+    @Override
+    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = normalizeFilter(filter);
+        log.debug("Finding extensions from plugin '{}' using filter '{}'", pluginId, effectiveFilter);
         List<ExtensionWrapper> result = new ArrayList<>();
 
-        Set<String> classNames = findClassNames(pluginId);
+        if (!effectiveFilter.matches(pluginId)) {
+            return result;
+        }
+
+        Set<String> classNames = findClassNames(pluginId, effectiveFilter);
         if (classNames.isEmpty()) {
             return result;
         }
@@ -188,12 +206,17 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
             log.trace("Checking extensions from classpath");
         }
 
-        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+        ClassLoader classLoader = getClassLoader(pluginId);
 
         for (String className : classNames) {
             try {
                 log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
                 Class<?> extensionClass = classLoader.loadClass(className);
+
+                if (!effectiveFilter.matches(pluginId, className, extensionClass)) {
+                    log.trace("'{}' is ignored by filter '{}'", className, effectiveFilter);
+                    continue;
+                }
 
                 ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
                 result.add(extensionWrapper);
@@ -209,7 +232,6 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
             log.debug("Found {} extensions for plugin '{}'", result.size(), pluginId);
         }
 
-        // sort by "ordinal" property
         Collections.sort(result);
 
         return result;
@@ -217,7 +239,17 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
 
     @Override
     public Set<String> findClassNames(String pluginId) {
-        Set<String> classNames = getEntries().get(pluginId);
+        return findClassNames(pluginId, ExtensionFilter.empty());
+    }
+
+    @Override
+    public Set<String> findClassNames(String pluginId, ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = normalizeFilter(filter);
+        if (!effectiveFilter.matches(pluginId)) {
+            return Collections.emptySet();
+        }
+
+        Set<String> classNames = getEntries(effectiveFilter).get(pluginId);
         if (classNames == null) {
             return Collections.emptySet();
         }
@@ -227,16 +259,9 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
 
     @Override
     public void pluginStateChanged(PluginStateEvent event) {
-        // TODO optimize (do only for some transitions)
-        // clear cache
         entries = null;
+        filteredEntries = null;
 
-        // By default, we're assuming, that no checks for extension dependencies are necessary.
-        //
-        // A plugin, that has an optional dependency to other plugins, might lead to unloadable
-        // Java classes (NoClassDefFoundError) at application runtime due to possibly missing
-        // dependencies. Therefore, we're enabling the check for optional extensions, if the
-        // started plugin contains at least one optional plugin dependency.
         if (checkForExtensionDependencies == null && event.getPluginState().isStarted()) {
             for (PluginDependency dependency : event.getPlugin().getDescriptor().getDependencies()) {
                 if (dependency.isOptional()) {
@@ -248,40 +273,10 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
         }
     }
 
-    /**
-     * Returns true, if the extension finder checks extensions for its required plugins.
-     * This feature has to be enabled, in order check the availability of
-     * {@link Extension#plugins()} configured by an extension.
-     * <p>
-     * This feature is enabled by default, if at least one available plugin makes use of
-     * optional plugin dependencies. Those optional plugins might not be available at runtime.
-     * Therefore, any extension is checked by default against available plugins before its
-     * instantiation.
-     * <p>
-     * Notice: This feature requires the optional <a href="https://asm.ow2.io/">ASM library</a>
-     * to be available on the applications classpath.
-     *
-     * @return true, if the extension finder checks extensions for its required plugins
-     */
     public final boolean isCheckForExtensionDependencies() {
         return Boolean.TRUE.equals(checkForExtensionDependencies);
     }
 
-    /**
-     * Plugin developers may enable / disable checks for required plugins of an extension.
-     * This feature has to be enabled, in order check the availability of
-     * {@link Extension#plugins()} configured by an extension.
-     * <p>
-     * This feature is enabled by default, if at least one available plugin makes use of
-     * optional plugin dependencies. Those optional plugins might not be available at runtime.
-     * Therefore, any extension is checked by default against available plugins before its
-     * instantiation.
-     * <p>
-     * Notice: This feature requires the optional <a href="https://asm.ow2.io/">ASM library</a>
-     * to be available on the applications classpath.
-     *
-     * @param checkForExtensionDependencies true to enable checks for optional extensions, otherwise false
-     */
     public void setCheckForExtensionDependencies(boolean checkForExtensionDependencies) {
         this.checkForExtensionDependencies = checkForExtensionDependencies;
     }
@@ -296,6 +291,49 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
                     log.debug("   " + extension);
                 }
             }
+        }
+    }
+
+    protected Map<String, Set<String>> createFilteredEntries(ExtensionFilter filter) {
+        Map<String, Set<String>> sourceEntries = getEntries();
+        Map<String, Set<String>> result = new LinkedHashMap<>();
+
+        for (Map.Entry<String, Set<String>> entry : sourceEntries.entrySet()) {
+            String pluginId = entry.getKey();
+            if (!filter.matches(pluginId)) {
+                continue;
+            }
+
+            Set<String> filteredClassNames = new LinkedHashSet<>();
+            for (String className : entry.getValue()) {
+                if (matchesFilter(pluginId, className, filter)) {
+                    filteredClassNames.add(className);
+                }
+            }
+
+            if (!filteredClassNames.isEmpty()) {
+                result.put(pluginId, filteredClassNames);
+            }
+        }
+
+        return result;
+    }
+
+    private boolean matchesFilter(String pluginId, String className, ExtensionFilter filter) {
+        if (!filter.matches(pluginId, className)) {
+            return false;
+        }
+
+        if (!filter.hasExtensionType()) {
+            return true;
+        }
+
+        try {
+            Class<?> extensionClass = getClassLoader(pluginId).loadClass(className);
+            return filter.matches(pluginId, className, extensionClass);
+        } catch (ClassNotFoundException | NoClassDefFoundError e) {
+            log.error(e.getMessage(), e);
+            return false;
         }
     }
 
@@ -316,15 +354,31 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
         return entries;
     }
 
-    /**
-     * Returns the parameters of an {@link Extension} annotation without loading
-     * the corresponding class into the class loader.
-     *
-     * @param className name of the class, that holds the requested {@link Extension} annotation
-     * @param classLoader class loader to access the class
-     * @return the contents of the {@link Extension} annotation or null, if the class does not
-     * have an {@link Extension} annotation
-     */
+    private Map<String, Set<String>> getEntries(ExtensionFilter filter) {
+        ExtensionFilter effectiveFilter = normalizeFilter(filter);
+        if (effectiveFilter.isEmpty()) {
+            return getEntries();
+        }
+
+        if (filteredEntries == null) {
+            filteredEntries = new HashMap<>();
+        }
+
+        if (!filteredEntries.containsKey(effectiveFilter)) {
+            filteredEntries.put(effectiveFilter, createFilteredEntries(effectiveFilter));
+        }
+
+        return filteredEntries.get(effectiveFilter);
+    }
+
+    private ExtensionFilter normalizeFilter(ExtensionFilter filter) {
+        return filter != null ? filter : ExtensionFilter.empty();
+    }
+
+    private ClassLoader getClassLoader(String pluginId) {
+        return pluginId != null ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+    }
+
     private ExtensionInfo getExtensionInfo(String className, ClassLoader classLoader) {
         if (extensionInfos == null) {
             extensionInfos = new HashMap<>();
@@ -357,14 +411,12 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
             return clazz.getAnnotation(Extension.class);
         }
 
-        // search recursively through all annotations
         for (Annotation annotation : clazz.getAnnotations()) {
             Class<? extends Annotation> annotationClass = annotation.annotationType();
             if (!annotationClass.getName().startsWith("java.lang.annotation") && !annotationClass.getName().startsWith("kotlin")) {
-                // In case an annotation is annotated with itself,
-                // an example would be @Target, which is ignored by the check above
-                // however, other libraries might do similar things
-                if (annotationClass.equals(clazz)) continue;
+                if (annotationClass.equals(clazz)) {
+                    continue;
+                }
 
                 Extension extensionAnnotation = findExtensionAnnotation(annotationClass);
                 if (extensionAnnotation != null) {
@@ -377,11 +429,9 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
     }
 
     boolean checkDifferentClassLoaders(Class<?> type, Class<?> extensionClass) {
-        ClassLoader typeClassLoader = type.getClassLoader(); // class loader of extension point
+        ClassLoader typeClassLoader = type.getClassLoader();
         ClassLoader extensionClassLoader = extensionClass.getClassLoader();
         boolean match = ClassUtils.getAllInterfacesNames(extensionClass).contains(type.getSimpleName());
-        // in this scenario the method 'isAssignableFrom' returns only FALSE
-        // see http://www.coderanch.com/t/557846/java/java/FWIW-FYI-isAssignableFrom-isInstance-differing
         return match && extensionClassLoader != typeClassLoader;
     }
 

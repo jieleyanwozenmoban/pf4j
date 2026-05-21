@@ -1,0 +1,2502 @@
+diff --git a/src/main/java/org/pf4j/AbstractExtensionFinder.java b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+index b924211..69ad0f0 100755
+--- a/src/main/java/org/pf4j/AbstractExtensionFinder.java
++++ b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+@@ -1,388 +1,438 @@
+-/*
+- * Copyright (C) 2012-present the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.pf4j;
+-
+-import org.pf4j.asm.ExtensionInfo;
+-import org.pf4j.util.ClassUtils;
+-import org.slf4j.Logger;
+-import org.slf4j.LoggerFactory;
+-
+-import java.lang.annotation.Annotation;
+-import java.util.ArrayList;
+-import java.util.Collections;
+-import java.util.HashMap;
+-import java.util.LinkedHashMap;
+-import java.util.List;
+-import java.util.Map;
+-import java.util.Set;
+-
+-/**
+- * @author Decebal Suiu
+- */
+-public abstract class AbstractExtensionFinder implements ExtensionFinder, PluginStateListener {
+-
+-    private static final Logger log = LoggerFactory.getLogger(AbstractExtensionFinder.class);
+-
+-    protected PluginManager pluginManager;
+-    protected volatile Map<String, Set<String>> entries; // cache by pluginId
+-    protected volatile Map<String, ExtensionInfo> extensionInfos; // cache extension infos by class name
+-    protected Boolean checkForExtensionDependencies = null;
+-
+-    protected AbstractExtensionFinder(PluginManager pluginManager) {
+-        this.pluginManager = pluginManager;
+-    }
+-
+-    public abstract Map<String, Set<String>> readPluginsStorages();
+-
+-    public abstract Map<String, Set<String>> readClasspathStorages();
+-
+-    @Override
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
+-        log.debug("Finding extensions of extension point '{}'", type.getName());
+-        Map<String, Set<String>> entries = getEntries();
+-        List<ExtensionWrapper<T>> result = new ArrayList<>();
+-
+-        // add extensions found in classpath and plugins
+-        for (String pluginId : entries.keySet()) {
+-            // classpath's extensions <=> pluginId = null
+-            List<ExtensionWrapper<T>> pluginExtensions = find(type, pluginId);
+-            result.addAll(pluginExtensions);
+-        }
+-
+-        if (result.isEmpty()) {
+-            log.debug("No extensions found for extension point '{}'", type.getName());
+-        } else {
+-            log.debug("Found {} extensions for extension point '{}'", result.size(), type.getName());
+-        }
+-
+-        // sort by "ordinal" property
+-        Collections.sort(result);
+-
+-        return result;
+-    }
+-
+-    @Override
+-    @SuppressWarnings("unchecked")
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
+-        log.debug("Finding extensions of extension point '{}' for plugin '{}'", type.getName(), pluginId);
+-        List<ExtensionWrapper<T>> result = new ArrayList<>();
+-
+-        // classpath's extensions <=> pluginId = null
+-        Set<String> classNames = findClassNames(pluginId);
+-        if (classNames.isEmpty()) {
+-            return result;
+-        }
+-
+-        if (pluginId != null) {
+-            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
+-            if (!pluginWrapper.getPluginState().isStarted()) {
+-                return result;
+-            }
+-
+-            log.trace("Checking extensions from plugin '{}'", pluginId);
+-        } else {
+-            log.trace("Checking extensions from classpath");
+-        }
+-
+-        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+-
+-        for (String className : classNames) {
+-            try {
+-                if (isCheckForExtensionDependencies()) {
+-                    // Load extension annotation without initializing the class itself.
+-                    //
+-                    // If optional dependencies are used, the class loader might not be able
+-                    // to load the extension class because of missing optional dependencies.
+-                    //
+-                    // Therefore, we're extracting the extension annotation via asm, in order
+-                    // to extract the required plugins for an extension. Only if all required
+-                    // plugins are currently available and started, the corresponding
+-                    // extension is loaded through the class loader.
+-                    ExtensionInfo extensionInfo = getExtensionInfo(className, classLoader);
+-                    if (extensionInfo == null) {
+-                        log.error("No extension annotation was found for '{}'", className);
+-                        continue;
+-                    }
+-
+-                    // Make sure, that all plugins required by this extension are available.
+-                    List<String> missingPluginIds = new ArrayList<>();
+-                    for (String requiredPluginId : extensionInfo.getPlugins()) {
+-                        PluginWrapper requiredPlugin = pluginManager.getPlugin(requiredPluginId);
+-                        if (requiredPlugin == null || !requiredPlugin.getPluginState().isStarted()) {
+-                            missingPluginIds.add(requiredPluginId);
+-                        }
+-                    }
+-                    if (!missingPluginIds.isEmpty()) {
+-                        StringBuilder missing = new StringBuilder();
+-                        for (String missingPluginId : missingPluginIds) {
+-                            if (missing.length() > 0) missing.append(", ");
+-                            missing.append(missingPluginId);
+-                        }
+-                        log.trace("Extension '{}' is ignored due to missing plugins: {}", className, missing);
+-                        continue;
+-                    }
+-                }
+-
+-                log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
+-                Class<?> extensionClass = classLoader.loadClass(className);
+-
+-                log.debug("Checking extension type '{}'", className);
+-                if (type.isAssignableFrom(extensionClass)) {
+-                    ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
+-                    result.add(extensionWrapper);
+-                    log.debug("Added extension '{}' with ordinal {}", className, extensionWrapper.getOrdinal());
+-                } else {
+-                    log.trace("'{}' is not an extension for extension point '{}'", className, type.getName());
+-                    if (checkDifferentClassLoaders(type, extensionClass)) {
+-                        log.error("Different class loaders: '{}' (E) and '{}' (EP)", extensionClass.getClassLoader(), type.getClassLoader());
+-                    }
+-                }
+-            } catch (ClassNotFoundException | NoClassDefFoundError e) {
+-                log.error(e.getMessage(), e);
+-            }
+-        }
+-
+-        if (result.isEmpty()) {
+-            log.debug("No extensions found for extension point '{}'", type.getName());
+-        } else {
+-            log.debug("Found {} extensions for extension point '{}'", result.size(), type.getName());
+-        }
+-
+-        // sort by "ordinal" property
+-        Collections.sort(result);
+-
+-        return result;
+-    }
+-
+-    @Override
+-    public List<ExtensionWrapper> find(String pluginId) {
+-        log.debug("Finding extensions from plugin '{}'", pluginId);
+-        List<ExtensionWrapper> result = new ArrayList<>();
+-
+-        Set<String> classNames = findClassNames(pluginId);
+-        if (classNames.isEmpty()) {
+-            return result;
+-        }
+-
+-        if (pluginId != null) {
+-            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
+-            if (!pluginWrapper.getPluginState().isStarted()) {
+-                return result;
+-            }
+-
+-            log.trace("Checking extensions from plugin '{}'", pluginId);
+-        } else {
+-            log.trace("Checking extensions from classpath");
+-        }
+-
+-        ClassLoader classLoader = (pluginId != null) ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
+-
+-        for (String className : classNames) {
+-            try {
+-                log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
+-                Class<?> extensionClass = classLoader.loadClass(className);
+-
+-                ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
+-                result.add(extensionWrapper);
+-                log.debug("Added extension '{}' with ordinal {}", className, extensionWrapper.getOrdinal());
+-            } catch (ClassNotFoundException | NoClassDefFoundError e) {
+-                log.error(e.getMessage(), e);
+-            }
+-        }
+-
+-        if (result.isEmpty()) {
+-            log.debug("No extensions found for plugin '{}'", pluginId);
+-        } else {
+-            log.debug("Found {} extensions for plugin '{}'", result.size(), pluginId);
+-        }
+-
+-        // sort by "ordinal" property
+-        Collections.sort(result);
+-
+-        return result;
+-    }
+-
+-    @Override
+-    public Set<String> findClassNames(String pluginId) {
+-        Set<String> classNames = getEntries().get(pluginId);
+-        if (classNames == null) {
+-            return Collections.emptySet();
+-        }
+-
+-        return classNames;
+-    }
+-
+-    @Override
+-    public void pluginStateChanged(PluginStateEvent event) {
+-        // TODO optimize (do only for some transitions)
+-        // clear cache
+-        entries = null;
+-
+-        // By default, we're assuming, that no checks for extension dependencies are necessary.
+-        //
+-        // A plugin, that has an optional dependency to other plugins, might lead to unloadable
+-        // Java classes (NoClassDefFoundError) at application runtime due to possibly missing
+-        // dependencies. Therefore, we're enabling the check for optional extensions, if the
+-        // started plugin contains at least one optional plugin dependency.
+-        if (checkForExtensionDependencies == null && event.getPluginState().isStarted()) {
+-            for (PluginDependency dependency : event.getPlugin().getDescriptor().getDependencies()) {
+-                if (dependency.isOptional()) {
+-                    log.debug("Enable check for extension dependencies via ASM.");
+-                    checkForExtensionDependencies = true;
+-                    break;
+-                }
+-            }
+-        }
+-    }
+-
+-    /**
+-     * Returns true, if the extension finder checks extensions for its required plugins.
+-     * This feature has to be enabled, in order check the availability of
+-     * {@link Extension#plugins()} configured by an extension.
+-     * <p>
+-     * This feature is enabled by default, if at least one available plugin makes use of
+-     * optional plugin dependencies. Those optional plugins might not be available at runtime.
+-     * Therefore, any extension is checked by default against available plugins before its
+-     * instantiation.
+-     * <p>
+-     * Notice: This feature requires the optional <a href="https://asm.ow2.io/">ASM library</a>
+-     * to be available on the applications classpath.
+-     *
+-     * @return true, if the extension finder checks extensions for its required plugins
+-     */
+-    public final boolean isCheckForExtensionDependencies() {
+-        return Boolean.TRUE.equals(checkForExtensionDependencies);
+-    }
+-
+-    /**
+-     * Plugin developers may enable / disable checks for required plugins of an extension.
+-     * This feature has to be enabled, in order check the availability of
+-     * {@link Extension#plugins()} configured by an extension.
+-     * <p>
+-     * This feature is enabled by default, if at least one available plugin makes use of
+-     * optional plugin dependencies. Those optional plugins might not be available at runtime.
+-     * Therefore, any extension is checked by default against available plugins before its
+-     * instantiation.
+-     * <p>
+-     * Notice: This feature requires the optional <a href="https://asm.ow2.io/">ASM library</a>
+-     * to be available on the applications classpath.
+-     *
+-     * @param checkForExtensionDependencies true to enable checks for optional extensions, otherwise false
+-     */
+-    public void setCheckForExtensionDependencies(boolean checkForExtensionDependencies) {
+-        this.checkForExtensionDependencies = checkForExtensionDependencies;
+-    }
+-
+-    protected void debugExtensions(Set<String> extensions) {
+-        if (log.isDebugEnabled()) {
+-            if (extensions.isEmpty()) {
+-                log.debug("No extensions found");
+-            } else {
+-                log.debug("Found possible {} extensions:", extensions.size());
+-                for (String extension : extensions) {
+-                    log.debug("   " + extension);
+-                }
+-            }
+-        }
+-    }
+-
+-    private Map<String, Set<String>> readStorages() {
+-        Map<String, Set<String>> result = new LinkedHashMap<>();
+-
+-        result.putAll(readClasspathStorages());
+-        result.putAll(readPluginsStorages());
+-
+-        return result;
+-    }
+-
+-    private Map<String, Set<String>> getEntries() {
+-        if (entries == null) {
+-            entries = readStorages();
+-        }
+-
+-        return entries;
+-    }
+-
+-    /**
+-     * Returns the parameters of an {@link Extension} annotation without loading
+-     * the corresponding class into the class loader.
+-     *
+-     * @param className name of the class, that holds the requested {@link Extension} annotation
+-     * @param classLoader class loader to access the class
+-     * @return the contents of the {@link Extension} annotation or null, if the class does not
+-     * have an {@link Extension} annotation
+-     */
+-    private ExtensionInfo getExtensionInfo(String className, ClassLoader classLoader) {
+-        if (extensionInfos == null) {
+-            extensionInfos = new HashMap<>();
+-        }
+-
+-        if (!extensionInfos.containsKey(className)) {
+-            log.trace("Load annotation for '{}' using asm", className);
+-            ExtensionInfo info = ExtensionInfo.load(className, classLoader);
+-            if (info == null) {
+-                log.warn("No extension annotation was found for '{}'", className);
+-                extensionInfos.put(className, null);
+-            } else {
+-                extensionInfos.put(className, info);
+-            }
+-        }
+-
+-        return extensionInfos.get(className);
+-    }
+-
+-    private ExtensionWrapper createExtensionWrapper(Class<?> extensionClass) {
+-        Extension extensionAnnotation = findExtensionAnnotation(extensionClass);
+-        int ordinal = extensionAnnotation != null ? extensionAnnotation.ordinal() : 0;
+-        ExtensionDescriptor descriptor = new ExtensionDescriptor(ordinal, extensionClass);
+-
+-        return new ExtensionWrapper<>(descriptor, pluginManager.getExtensionFactory());
+-    }
+-
+-    public static Extension findExtensionAnnotation(Class<?> clazz) {
+-        if (clazz.isAnnotationPresent(Extension.class)) {
+-            return clazz.getAnnotation(Extension.class);
+-        }
+-
+-        // search recursively through all annotations
+-        for (Annotation annotation : clazz.getAnnotations()) {
+-            Class<? extends Annotation> annotationClass = annotation.annotationType();
+-            if (!annotationClass.getName().startsWith("java.lang.annotation") && !annotationClass.getName().startsWith("kotlin")) {
+-                // In case an annotation is annotated with itself,
+-                // an example would be @Target, which is ignored by the check above
+-                // however, other libraries might do similar things
+-                if (annotationClass.equals(clazz)) continue;
+-
+-                Extension extensionAnnotation = findExtensionAnnotation(annotationClass);
+-                if (extensionAnnotation != null) {
+-                    return extensionAnnotation;
+-                }
+-            }
+-        }
+-
+-        return null;
+-    }
+-
+-    boolean checkDifferentClassLoaders(Class<?> type, Class<?> extensionClass) {
+-        ClassLoader typeClassLoader = type.getClassLoader(); // class loader of extension point
+-        ClassLoader extensionClassLoader = extensionClass.getClassLoader();
+-        boolean match = ClassUtils.getAllInterfacesNames(extensionClass).contains(type.getSimpleName());
+-        // in this scenario the method 'isAssignableFrom' returns only FALSE
+-        // see http://www.coderanch.com/t/557846/java/java/FWIW-FYI-isAssignableFrom-isInstance-differing
+-        return match && extensionClassLoader != typeClassLoader;
+-    }
+-
+-}
++/*
++ * Copyright (C) 2012-present the original author or authors.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.pf4j;
++
++import org.pf4j.asm.ExtensionInfo;
++import org.pf4j.util.ClassUtils;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++import java.lang.annotation.Annotation;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * @author Decebal Suiu
++ */
++public abstract class AbstractExtensionFinder implements ExtensionFinder, PluginStateListener {
++
++    private static final Logger log = LoggerFactory.getLogger(AbstractExtensionFinder.class);
++
++    protected PluginManager pluginManager;
++    protected volatile Map<String, Set<String>> entries;
++    protected volatile Map<ExtensionFilter, Map<String, Set<String>>> filteredEntries;
++    protected volatile Map<String, ExtensionInfo> extensionInfos;
++    protected Boolean checkForExtensionDependencies = null;
++
++    protected AbstractExtensionFinder(PluginManager pluginManager) {
++        this.pluginManager = pluginManager;
++    }
++
++    public abstract Map<String, Set<String>> readPluginsStorages();
++
++    public abstract Map<String, Set<String>> readClasspathStorages();
++
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
++        return find(type, ExtensionFilter.empty());
++    }
++
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = normalizeFilter(filter);
++        log.debug("Finding extensions of extension point '{}' using filter '{}'", type.getName(), effectiveFilter);
++        Map<String, Set<String>> entries = getEntries(effectiveFilter);
++        List<ExtensionWrapper<T>> result = new ArrayList<>();
++
++        for (String pluginId : entries.keySet()) {
++            result.addAll(find(type, pluginId, effectiveFilter));
++        }
++
++        if (result.isEmpty()) {
++            log.debug("No extensions found for extension point '{}'", type.getName());
++        } else {
++            log.debug("Found {} extensions for extension point '{}'", result.size(), type.getName());
++        }
++
++        Collections.sort(result);
++
++        return result;
++    }
++
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
++        return find(type, pluginId, ExtensionFilter.empty());
++    }
++
++    @SuppressWarnings("unchecked")
++    protected <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = normalizeFilter(filter);
++        log.debug("Finding extensions of extension point '{}' for plugin '{}' using filter '{}'", type.getName(), pluginId, effectiveFilter);
++        List<ExtensionWrapper<T>> result = new ArrayList<>();
++
++        if (!effectiveFilter.matches(pluginId)) {
++            return result;
++        }
++
++        Set<String> classNames = findClassNames(pluginId, effectiveFilter);
++        if (classNames.isEmpty()) {
++            return result;
++        }
++
++        if (pluginId != null) {
++            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
++            if (!pluginWrapper.getPluginState().isStarted()) {
++                return result;
++            }
++
++            log.trace("Checking extensions from plugin '{}'", pluginId);
++        } else {
++            log.trace("Checking extensions from classpath");
++        }
++
++        ClassLoader classLoader = getClassLoader(pluginId);
++
++        for (String className : classNames) {
++            try {
++                if (isCheckForExtensionDependencies()) {
++                    ExtensionInfo extensionInfo = getExtensionInfo(className, classLoader);
++                    if (extensionInfo == null) {
++                        log.error("No extension annotation was found for '{}'", className);
++                        continue;
++                    }
++
++                    List<String> missingPluginIds = new ArrayList<>();
++                    for (String requiredPluginId : extensionInfo.getPlugins()) {
++                        PluginWrapper requiredPlugin = pluginManager.getPlugin(requiredPluginId);
++                        if (requiredPlugin == null || !requiredPlugin.getPluginState().isStarted()) {
++                            missingPluginIds.add(requiredPluginId);
++                        }
++                    }
++                    if (!missingPluginIds.isEmpty()) {
++                        StringBuilder missing = new StringBuilder();
++                        for (String missingPluginId : missingPluginIds) {
++                            if (missing.length() > 0) {
++                                missing.append(", ");
++                            }
++                            missing.append(missingPluginId);
++                        }
++                        log.trace("Extension '{}' is ignored due to missing plugins: {}", className, missing);
++                        continue;
++                    }
++                }
++
++                log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
++                Class<?> extensionClass = classLoader.loadClass(className);
++
++                if (!effectiveFilter.matches(pluginId, className, extensionClass)) {
++                    log.trace("'{}' is ignored by filter '{}'", className, effectiveFilter);
++                    continue;
++                }
++
++                log.debug("Checking extension type '{}'", className);
++                if (type.isAssignableFrom(extensionClass)) {
++                    ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
++                    result.add(extensionWrapper);
++                    log.debug("Added extension '{}' with ordinal {}", className, extensionWrapper.getOrdinal());
++                } else {
++                    log.trace("'{}' is not an extension for extension point '{}'", className, type.getName());
++                    if (checkDifferentClassLoaders(type, extensionClass)) {
++                        log.error("Different class loaders: '{}' (E) and '{}' (EP)", extensionClass.getClassLoader(), type.getClassLoader());
++                    }
++                }
++            } catch (ClassNotFoundException | NoClassDefFoundError e) {
++                log.error(e.getMessage(), e);
++            }
++        }
++
++        if (result.isEmpty()) {
++            log.debug("No extensions found for extension point '{}'", type.getName());
++        } else {
++            log.debug("Found {} extensions for extension point '{}'", result.size(), type.getName());
++        }
++
++        Collections.sort(result);
++
++        return result;
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(String pluginId) {
++        return find(pluginId, ExtensionFilter.empty());
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = normalizeFilter(filter);
++        log.debug("Finding extensions from plugin '{}' using filter '{}'", pluginId, effectiveFilter);
++        List<ExtensionWrapper> result = new ArrayList<>();
++
++        if (!effectiveFilter.matches(pluginId)) {
++            return result;
++        }
++
++        Set<String> classNames = findClassNames(pluginId, effectiveFilter);
++        if (classNames.isEmpty()) {
++            return result;
++        }
++
++        if (pluginId != null) {
++            PluginWrapper pluginWrapper = pluginManager.getPlugin(pluginId);
++            if (!pluginWrapper.getPluginState().isStarted()) {
++                return result;
++            }
++
++            log.trace("Checking extensions from plugin '{}'", pluginId);
++        } else {
++            log.trace("Checking extensions from classpath");
++        }
++
++        ClassLoader classLoader = getClassLoader(pluginId);
++
++        for (String className : classNames) {
++            try {
++                log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
++                Class<?> extensionClass = classLoader.loadClass(className);
++
++                if (!effectiveFilter.matches(pluginId, className, extensionClass)) {
++                    log.trace("'{}' is ignored by filter '{}'", className, effectiveFilter);
++                    continue;
++                }
++
++                ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
++                result.add(extensionWrapper);
++                log.debug("Added extension '{}' with ordinal {}", className, extensionWrapper.getOrdinal());
++            } catch (ClassNotFoundException | NoClassDefFoundError e) {
++                log.error(e.getMessage(), e);
++            }
++        }
++
++        if (result.isEmpty()) {
++            log.debug("No extensions found for plugin '{}'", pluginId);
++        } else {
++            log.debug("Found {} extensions for plugin '{}'", result.size(), pluginId);
++        }
++
++        Collections.sort(result);
++
++        return result;
++    }
++
++    @Override
++    public Set<String> findClassNames(String pluginId) {
++        return findClassNames(pluginId, ExtensionFilter.empty());
++    }
++
++    @Override
++    public Set<String> findClassNames(String pluginId, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = normalizeFilter(filter);
++        if (!effectiveFilter.matches(pluginId)) {
++            return Collections.emptySet();
++        }
++
++        Set<String> classNames = getEntries(effectiveFilter).get(pluginId);
++        if (classNames == null) {
++            return Collections.emptySet();
++        }
++
++        return classNames;
++    }
++
++    @Override
++    public void pluginStateChanged(PluginStateEvent event) {
++        entries = null;
++        filteredEntries = null;
++
++        if (checkForExtensionDependencies == null && event.getPluginState().isStarted()) {
++            for (PluginDependency dependency : event.getPlugin().getDescriptor().getDependencies()) {
++                if (dependency.isOptional()) {
++                    log.debug("Enable check for extension dependencies via ASM.");
++                    checkForExtensionDependencies = true;
++                    break;
++                }
++            }
++        }
++    }
++
++    public final boolean isCheckForExtensionDependencies() {
++        return Boolean.TRUE.equals(checkForExtensionDependencies);
++    }
++
++    public void setCheckForExtensionDependencies(boolean checkForExtensionDependencies) {
++        this.checkForExtensionDependencies = checkForExtensionDependencies;
++    }
++
++    protected void debugExtensions(Set<String> extensions) {
++        if (log.isDebugEnabled()) {
++            if (extensions.isEmpty()) {
++                log.debug("No extensions found");
++            } else {
++                log.debug("Found possible {} extensions:", extensions.size());
++                for (String extension : extensions) {
++                    log.debug("   " + extension);
++                }
++            }
++        }
++    }
++
++    protected Map<String, Set<String>> createFilteredEntries(ExtensionFilter filter) {
++        Map<String, Set<String>> sourceEntries = getEntries();
++        Map<String, Set<String>> result = new LinkedHashMap<>();
++
++        for (Map.Entry<String, Set<String>> entry : sourceEntries.entrySet()) {
++            String pluginId = entry.getKey();
++            if (!filter.matches(pluginId)) {
++                continue;
++            }
++
++            Set<String> filteredClassNames = new LinkedHashSet<>();
++            for (String className : entry.getValue()) {
++                if (matchesFilter(pluginId, className, filter)) {
++                    filteredClassNames.add(className);
++                }
++            }
++
++            if (!filteredClassNames.isEmpty()) {
++                result.put(pluginId, filteredClassNames);
++            }
++        }
++
++        return result;
++    }
++
++    private boolean matchesFilter(String pluginId, String className, ExtensionFilter filter) {
++        if (!filter.matches(pluginId, className)) {
++            return false;
++        }
++
++        if (!filter.hasExtensionType()) {
++            return true;
++        }
++
++        try {
++            Class<?> extensionClass = getClassLoader(pluginId).loadClass(className);
++            return filter.matches(pluginId, className, extensionClass);
++        } catch (ClassNotFoundException | NoClassDefFoundError e) {
++            log.error(e.getMessage(), e);
++            return false;
++        }
++    }
++
++    private Map<String, Set<String>> readStorages() {
++        Map<String, Set<String>> result = new LinkedHashMap<>();
++
++        result.putAll(readClasspathStorages());
++        result.putAll(readPluginsStorages());
++
++        return result;
++    }
++
++    private Map<String, Set<String>> getEntries() {
++        if (entries == null) {
++            entries = readStorages();
++        }
++
++        return entries;
++    }
++
++    private Map<String, Set<String>> getEntries(ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = normalizeFilter(filter);
++        if (effectiveFilter.isEmpty()) {
++            return getEntries();
++        }
++
++        if (filteredEntries == null) {
++            filteredEntries = new HashMap<>();
++        }
++
++        if (!filteredEntries.containsKey(effectiveFilter)) {
++            filteredEntries.put(effectiveFilter, createFilteredEntries(effectiveFilter));
++        }
++
++        return filteredEntries.get(effectiveFilter);
++    }
++
++    private ExtensionFilter normalizeFilter(ExtensionFilter filter) {
++        return filter != null ? filter : ExtensionFilter.empty();
++    }
++
++    private ClassLoader getClassLoader(String pluginId) {
++        return pluginId != null ? pluginManager.getPluginClassLoader(pluginId) : getClass().getClassLoader();
++    }
++
++    private ExtensionInfo getExtensionInfo(String className, ClassLoader classLoader) {
++        if (extensionInfos == null) {
++            extensionInfos = new HashMap<>();
++        }
++
++        if (!extensionInfos.containsKey(className)) {
++            log.trace("Load annotation for '{}' using asm", className);
++            ExtensionInfo info = ExtensionInfo.load(className, classLoader);
++            if (info == null) {
++                log.warn("No extension annotation was found for '{}'", className);
++                extensionInfos.put(className, null);
++            } else {
++                extensionInfos.put(className, info);
++            }
++        }
++
++        return extensionInfos.get(className);
++    }
++
++    private ExtensionWrapper createExtensionWrapper(Class<?> extensionClass) {
++        Extension extensionAnnotation = findExtensionAnnotation(extensionClass);
++        int ordinal = extensionAnnotation != null ? extensionAnnotation.ordinal() : 0;
++        ExtensionDescriptor descriptor = new ExtensionDescriptor(ordinal, extensionClass);
++
++        return new ExtensionWrapper<>(descriptor, pluginManager.getExtensionFactory());
++    }
++
++    public static Extension findExtensionAnnotation(Class<?> clazz) {
++        if (clazz.isAnnotationPresent(Extension.class)) {
++            return clazz.getAnnotation(Extension.class);
++        }
++
++        for (Annotation annotation : clazz.getAnnotations()) {
++            Class<? extends Annotation> annotationClass = annotation.annotationType();
++            if (!annotationClass.getName().startsWith("java.lang.annotation") && !annotationClass.getName().startsWith("kotlin")) {
++                if (annotationClass.equals(clazz)) {
++                    continue;
++                }
++
++                Extension extensionAnnotation = findExtensionAnnotation(annotationClass);
++                if (extensionAnnotation != null) {
++                    return extensionAnnotation;
++                }
++            }
++        }
++
++        return null;
++    }
++
++    boolean checkDifferentClassLoaders(Class<?> type, Class<?> extensionClass) {
++        ClassLoader typeClassLoader = type.getClassLoader();
++        ClassLoader extensionClassLoader = extensionClass.getClassLoader();
++        boolean match = ClassUtils.getAllInterfacesNames(extensionClass).contains(type.getSimpleName());
++        return match && extensionClassLoader != typeClassLoader;
++    }
++
++}
+diff --git a/src/main/java/org/pf4j/DefaultExtensionFinder.java b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+index 1a6fc6b..a83fc3a 100755
+--- a/src/main/java/org/pf4j/DefaultExtensionFinder.java
++++ b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+@@ -1,100 +1,130 @@
+-/*
+- * Copyright (C) 2012-present the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.pf4j;
+-
+-import java.util.ArrayList;
+-import java.util.HashSet;
+-import java.util.List;
+-import java.util.Set;
+-
+-/**
+- * The default implementation for {@link ExtensionFinder}.
+- * It's a compound {@code ExtensionFinder}.
+- *
+- * @author Decebal Suiu
+- */
+-public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListener {
+-
+-    protected PluginManager pluginManager;
+-    protected List<ExtensionFinder> finders = new ArrayList<>();
+-
+-    public DefaultExtensionFinder(PluginManager pluginManager) {
+-        this.pluginManager = pluginManager;
+-
+-        add(new IndexedExtensionFinder(pluginManager));
+-//        add(new ServiceProviderExtensionFinder(pluginManager));
+-    }
+-
+-    @Override
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
+-        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
+-        for (ExtensionFinder finder : finders) {
+-            extensions.addAll(finder.find(type));
+-        }
+-
+-        return extensions;
+-    }
+-
+-    @Override
+-    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
+-        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
+-        for (ExtensionFinder finder : finders) {
+-            extensions.addAll(finder.find(type, pluginId));
+-        }
+-
+-        return extensions;
+-    }
+-
+-    @Override
+-    public List<ExtensionWrapper> find(String pluginId) {
+-        List<ExtensionWrapper> extensions = new ArrayList<>();
+-        for (ExtensionFinder finder : finders) {
+-            extensions.addAll(finder.find(pluginId));
+-        }
+-
+-        return extensions;
+-    }
+-
+-    @Override
+-    public Set<String> findClassNames(String pluginId) {
+-        Set<String> classNames = new HashSet<>();
+-        for (ExtensionFinder finder : finders) {
+-            classNames.addAll(finder.findClassNames(pluginId));
+-        }
+-
+-        return classNames;
+-    }
+-
+-    @Override
+-    public void pluginStateChanged(PluginStateEvent event) {
+-        for (ExtensionFinder finder : finders) {
+-            if (finder instanceof PluginStateListener) {
+-                ((PluginStateListener) finder).pluginStateChanged(event);
+-            }
+-        }
+-    }
+-
+-    public DefaultExtensionFinder addServiceProviderExtensionFinder() {
+-        return add(new ServiceProviderExtensionFinder(pluginManager));
+-    }
+-
+-    public DefaultExtensionFinder add(ExtensionFinder finder) {
+-        finders.add(finder);
+-
+-        return this;
+-    }
+-
+-}
++/*
++ * Copyright (C) 2012-present the original author or authors.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.pf4j;
++
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Set;
++
++/**
++ * The default implementation for {@link ExtensionFinder}.
++ * It's a compound {@code ExtensionFinder}.
++ *
++ * @author Decebal Suiu
++ */
++public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListener {
++
++    protected PluginManager pluginManager;
++    protected List<ExtensionFinder> finders = new ArrayList<>();
++
++    public DefaultExtensionFinder(PluginManager pluginManager) {
++        this.pluginManager = pluginManager;
++
++        add(new IndexedExtensionFinder(pluginManager));
++//        add(new ServiceProviderExtensionFinder(pluginManager));
++    }
++
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type) {
++        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(type));
++        }
++
++        return extensions;
++    }
++
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
++        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(type, filter));
++        }
++
++        return extensions;
++    }
++
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId) {
++        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(type, pluginId));
++        }
++
++        return extensions;
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(String pluginId) {
++        List<ExtensionWrapper> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(pluginId));
++        }
++
++        return extensions;
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
++        List<ExtensionWrapper> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(pluginId, filter));
++        }
++
++        return extensions;
++    }
++
++    @Override
++    public Set<String> findClassNames(String pluginId) {
++        Set<String> classNames = new HashSet<>();
++        for (ExtensionFinder finder : finders) {
++            classNames.addAll(finder.findClassNames(pluginId));
++        }
++
++        return classNames;
++    }
++
++    @Override
++    public Set<String> findClassNames(String pluginId, ExtensionFilter filter) {
++        Set<String> classNames = new HashSet<>();
++        for (ExtensionFinder finder : finders) {
++            classNames.addAll(finder.findClassNames(pluginId, filter));
++        }
++
++        return classNames;
++    }
++
++    @Override
++    public void pluginStateChanged(PluginStateEvent event) {
++        for (ExtensionFinder finder : finders) {
++            if (finder instanceof PluginStateListener) {
++                ((PluginStateListener) finder).pluginStateChanged(event);
++            }
++        }
++    }
++
++    public DefaultExtensionFinder addServiceProviderExtensionFinder() {
++        return add(new ServiceProviderExtensionFinder(pluginManager));
++    }
++
++    public DefaultExtensionFinder add(ExtensionFinder finder) {
++        finders.add(finder);
++
++        return this;
++    }
++
++}
+diff --git a/src/main/java/org/pf4j/ExtensionFinder.java b/src/main/java/org/pf4j/ExtensionFinder.java
+index 83d85ab..8f37bb5 100755
+--- a/src/main/java/org/pf4j/ExtensionFinder.java
++++ b/src/main/java/org/pf4j/ExtensionFinder.java
+@@ -1,48 +1,60 @@
+-/*
+- * Copyright (C) 2012-present the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.pf4j;
+-
+-import java.util.List;
+-import java.util.Set;
+-
+-/**
+- * Provides the functionality for finding extensions.
+- *
+- * @author Decebal Suiu
+- */
+-public interface ExtensionFinder {
+-
+-    /**
+-     * Retrieves a list with all extensions found for an extension point.
+-     */
+-    <T> List<ExtensionWrapper<T>> find(Class<T> type);
+-
+-    /**
+-     * Retrieves a list with all extensions found for an extension point and a plugin.
+-     */
+-    <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId);
+-
+-    /**
+-     * Retrieves a list with all extensions found for a plugin.
+-     */
+-    List<ExtensionWrapper> find(String pluginId);
+-
+-    /**
+-     * Retrieves a list with all extension class names found for a plugin.
+-     */
+-    Set<String> findClassNames(String pluginId);
+-
+-}
++/*
++ * Copyright (C) 2012-present the original author or authors.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.pf4j;
++
++import java.util.List;
++import java.util.Set;
++
++/**
++ * Provides the functionality for finding extensions.
++ *
++ * @author Decebal Suiu
++ */
++public interface ExtensionFinder {
++
++    /**
++     * Retrieves a list with all extensions found for an extension point.
++     */
++    <T> List<ExtensionWrapper<T>> find(Class<T> type);
++
++    default <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
++        return find(type);
++    }
++
++    /**
++     * Retrieves a list with all extensions found for an extension point and a plugin.
++     */
++    <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId);
++
++    /**
++     * Retrieves a list with all extensions found for a plugin.
++     */
++    List<ExtensionWrapper> find(String pluginId);
++
++    default List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
++        return find(pluginId);
++    }
++
++    /**
++     * Retrieves a list with all extension class names found for a plugin.
++     */
++    Set<String> findClassNames(String pluginId);
++
++    default Set<String> findClassNames(String pluginId, ExtensionFilter filter) {
++        return findClassNames(pluginId);
++    }
++
++}
+diff --git a/src/main/java/org/pf4j/PluginManager.java b/src/main/java/org/pf4j/PluginManager.java
+index 66e4b72..e005d27 100755
+--- a/src/main/java/org/pf4j/PluginManager.java
++++ b/src/main/java/org/pf4j/PluginManager.java
+@@ -1,243 +1,308 @@
+-/*
+- * Copyright (C) 2012-present the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.pf4j;
+-
+-import java.nio.file.Path;
+-import java.util.List;
+-import java.util.Set;
+-
+-/**
+- * Provides the functionality for plugin management such as load,
+- * start and stop the plugins.
+- *
+- * @author Decebal Suiu
+- */
+-public interface PluginManager {
+-
+-    /**
+-     * Retrieves all plugins.
+-     */
+-    List<PluginWrapper> getPlugins();
+-
+-    /**
+-     * Retrieves all plugins with this state.
+-     */
+-    List<PluginWrapper> getPlugins(PluginState pluginState);
+-
+-    /**
+-     * Retrieves all resolved plugins (with resolved dependency).
+-     */
+-    List<PluginWrapper> getResolvedPlugins();
+-
+-    /**
+-     * Retrieves all unresolved plugins (with unresolved dependency).
+-     */
+-    List<PluginWrapper> getUnresolvedPlugins();
+-
+-    /**
+-     * Retrieves all started plugins.
+-     */
+-    List<PluginWrapper> getStartedPlugins();
+-
+-    /**
+-     * Retrieves the plugin with this id, or null if the plugin does not exist.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return A PluginWrapper object for this plugin, or null if it does not exist.
+-     */
+-    PluginWrapper getPlugin(String pluginId);
+-
+-    /**
+-     * Load plugins.
+-     */
+-    void loadPlugins();
+-
+-    /**
+-     * Load a plugin.
+-     *
+-     * @param pluginPath the plugin location
+-     * @return the pluginId of the installed plugin as specified in its {@linkplain PluginDescriptor metadata}
+-     * @throws PluginRuntimeException if something goes wrong
+-     */
+-    String loadPlugin(Path pluginPath);
+-
+-    /**
+-     * Start all active plugins.
+-     */
+-    void startPlugins();
+-
+-    /**
+-     * Start the specified plugin and its dependencies.
+-     * <p>
+-     * If the returned state is {@link PluginState#FAILED}, you can retrieve the failure reason
+-     * by calling {@link PluginWrapper#getFailedException()} on the plugin wrapper.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return the plugin state after the start operation
+-     * @throws PluginRuntimeException if something goes wrong
+-     * @see PluginWrapper#getFailedException()
+-     */
+-    PluginState startPlugin(String pluginId);
+-
+-    /**
+-     * Stop all active plugins.
+-     */
+-    void stopPlugins();
+-
+-    /**
+-     * Stop the specified plugin and its dependencies.
+-     *
+-     * @return the plugin state
+-     * @throws PluginRuntimeException if something goes wrong
+-     */
+-    PluginState stopPlugin(String pluginId);
+-
+-    /**
+-     * Unload all plugins
+-     */
+-    void unloadPlugins();
+-
+-    /**
+-     * Unload a plugin.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return true if the plugin was unloaded
+-     * @throws PluginRuntimeException if something goes wrong
+-     */
+-    boolean unloadPlugin(String pluginId);
+-
+-    /**
+-     * Disables a plugin from being loaded.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return true if plugin is disabled
+-     * @throws PluginRuntimeException if something goes wrong
+-     */
+-    boolean disablePlugin(String pluginId);
+-
+-    /**
+-     * Enables a plugin that has previously been disabled.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return true if plugin is enabled
+-     * @throws PluginRuntimeException if something goes wrong
+-     */
+-    boolean enablePlugin(String pluginId);
+-
+-    /**
+-     * Deletes a plugin.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return true if the plugin was deleted
+-     * @throws PluginRuntimeException if something goes wrong
+-     */
+-    boolean deletePlugin(String pluginId);
+-
+-    /**
+-     * Retrieves the class loader for the specified plugin.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return the class loader for the plugin
+-     */
+-    ClassLoader getPluginClassLoader(String pluginId);
+-
+-    List<Class<?>> getExtensionClasses(String pluginId);
+-
+-    <T> List<Class<? extends T>> getExtensionClasses(Class<T> type);
+-
+-    <T> List<Class<? extends T>> getExtensionClasses(Class<T> type, String pluginId);
+-
+-    <T> List<T> getExtensions(Class<T> type);
+-
+-    <T> List<T> getExtensions(Class<T> type, String pluginId);
+-
+-    /**
+-     * Retrieves the extensions for the specified plugin.
+-     *
+-     * @param pluginId the unique plugin identifier, specified in its metadata
+-     * @return the extensions for the plugin
+-     */
+-    List getExtensions(String pluginId);
+-
+-    Set<String> getExtensionClassNames(String pluginId);
+-
+-    ExtensionFactory getExtensionFactory();
+-
+-    /**
+-     * The runtime mode. Must currently be either DEVELOPMENT or DEPLOYMENT.
+-     */
+-    RuntimeMode getRuntimeMode();
+-
+-    /**
+-     * Returns {@code true} if the runtime mode is {@link RuntimeMode#DEVELOPMENT}.
+-     */
+-    default boolean isDevelopment() {
+-        return RuntimeMode.DEVELOPMENT.equals(getRuntimeMode());
+-    }
+-
+-    /**
+-     * Returns {@code true} if the runtime mode is not {@link RuntimeMode#DEVELOPMENT}.
+-     */
+-    default boolean isNotDevelopment() {
+-        return !isDevelopment();
+-    }
+-
+-    /**
+-     * Retrieves the {@link PluginWrapper} that loaded the given class 'clazz'.
+-     */
+-    PluginWrapper whichPlugin(Class<?> clazz);
+-
+-    void addPluginStateListener(PluginStateListener listener);
+-
+-    void removePluginStateListener(PluginStateListener listener);
+-
+-    /**
+-     * Set the system version.  This is used to compare against the plugin
+-     * requires attribute.  The default system version is 0.0.0 which
+-     * disables all version checking.
+-     *
+-     * @default 0.0.0
+-     * @param version the system version
+-     */
+-    void setSystemVersion(String version);
+-
+-    /**
+-     * Returns the system version.
+-     *
+-     * @return the system version
+-     */
+-    String getSystemVersion();
+-
+-    /**
+-     * Gets the first path of the folders where plugins are installed.
+-     *
+-     * @deprecated Use {@link #getPluginsRoots()} instead to get all paths where plugins are could be installed.
+-     *
+-     * @return Path of plugins root
+-     */
+-    @Deprecated
+-    Path getPluginsRoot();
+-
+-    /**
+-     * Gets a read-only list of all paths of the folders where plugins are installed.
+-     *
+-     * @return Paths of plugins roots
+-     */
+-    List<Path> getPluginsRoots();
+-
+-    VersionManager getVersionManager();
+-
+-}
++/*
++ * Copyright (C) 2012-present the original author or authors.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.pf4j;
++
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Set;
++
++/**
++ * Provides the functionality for plugin management such as load,
++ * start and stop the plugins.
++ *
++ * @author Decebal Suiu
++ */
++public interface PluginManager {
++
++    /**
++     * Retrieves all plugins.
++     */
++    List<PluginWrapper> getPlugins();
++
++    /**
++     * Retrieves all plugins with this state.
++     */
++    List<PluginWrapper> getPlugins(PluginState pluginState);
++
++    /**
++     * Retrieves all resolved plugins (with resolved dependency).
++     */
++    List<PluginWrapper> getResolvedPlugins();
++
++    /**
++     * Retrieves all unresolved plugins (with unresolved dependency).
++     */
++    List<PluginWrapper> getUnresolvedPlugins();
++
++    /**
++     * Retrieves all started plugins.
++     */
++    List<PluginWrapper> getStartedPlugins();
++
++    /**
++     * Retrieves the plugin with this id, or null if the plugin does not exist.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return A PluginWrapper object for this plugin, or null if it does not exist.
++     */
++    PluginWrapper getPlugin(String pluginId);
++
++    /**
++     * Load plugins.
++     */
++    void loadPlugins();
++
++    /**
++     * Load a plugin.
++     *
++     * @param pluginPath the plugin location
++     * @return the pluginId of the installed plugin as specified in its {@linkplain PluginDescriptor metadata}
++     * @throws PluginRuntimeException if something goes wrong
++     */
++    String loadPlugin(Path pluginPath);
++
++    /**
++     * Start all active plugins.
++     */
++    void startPlugins();
++
++    /**
++     * Start the specified plugin and its dependencies.
++     * <p>
++     * If the returned state is {@link PluginState#FAILED}, you can retrieve the failure reason
++     * by calling {@link PluginWrapper#getFailedException()} on the plugin wrapper.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return the plugin state after the start operation
++     * @throws PluginRuntimeException if something goes wrong
++     * @see PluginWrapper#getFailedException()
++     */
++    PluginState startPlugin(String pluginId);
++
++    /**
++     * Stop all active plugins.
++     */
++    void stopPlugins();
++
++    /**
++     * Stop the specified plugin and its dependencies.
++     *
++     * @return the plugin state
++     * @throws PluginRuntimeException if something goes wrong
++     */
++    PluginState stopPlugin(String pluginId);
++
++    /**
++     * Unload all plugins
++     */
++    void unloadPlugins();
++
++    /**
++     * Unload a plugin.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return true if the plugin was unloaded
++     * @throws PluginRuntimeException if something goes wrong
++     */
++    boolean unloadPlugin(String pluginId);
++
++    /**
++     * Disables a plugin from being loaded.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return true if plugin is disabled
++     * @throws PluginRuntimeException if something goes wrong
++     */
++    boolean disablePlugin(String pluginId);
++
++    /**
++     * Enables a plugin that has previously been disabled.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return true if plugin is enabled
++     * @throws PluginRuntimeException if something goes wrong
++     */
++    boolean enablePlugin(String pluginId);
++
++    /**
++     * Deletes a plugin.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return true if the plugin was deleted
++     * @throws PluginRuntimeException if something goes wrong
++     */
++    boolean deletePlugin(String pluginId);
++
++    /**
++     * Retrieves the class loader for the specified plugin.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return the class loader for the plugin
++     */
++    ClassLoader getPluginClassLoader(String pluginId);
++
++    List<Class<?>> getExtensionClasses(String pluginId);
++
++    default List<Class<?>> getExtensionClasses(String pluginId, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
++        if (effectiveFilter.isEmpty()) {
++            return getExtensionClasses(pluginId);
++        }
++
++        List<Class<?>> extensionClasses = new ArrayList<>();
++        for (Class<?> extensionClass : getExtensionClasses(pluginId)) {
++            if (effectiveFilter.matches(this, extensionClass)) {
++                extensionClasses.add(extensionClass);
++            }
++        }
++
++        return extensionClasses;
++    }
++
++    <T> List<Class<? extends T>> getExtensionClasses(Class<T> type);
++
++    default <T> List<Class<? extends T>> getExtensionClasses(Class<T> type, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
++        if (effectiveFilter.isEmpty()) {
++            return getExtensionClasses(type);
++        }
++
++        List<Class<? extends T>> extensionClasses = new ArrayList<>();
++        for (Class<? extends T> extensionClass : getExtensionClasses(type)) {
++            if (effectiveFilter.matches(this, extensionClass)) {
++                extensionClasses.add(extensionClass);
++            }
++        }
++
++        return extensionClasses;
++    }
++
++    <T> List<Class<? extends T>> getExtensionClasses(Class<T> type, String pluginId);
++
++    <T> List<T> getExtensions(Class<T> type);
++
++    default <T> List<T> getExtensions(Class<T> type, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
++        if (effectiveFilter.isEmpty()) {
++            return getExtensions(type);
++        }
++
++        List<T> extensions = new ArrayList<>();
++        for (T extension : getExtensions(type)) {
++            if (effectiveFilter.matches(this, extension.getClass())) {
++                extensions.add(extension);
++            }
++        }
++
++        return extensions;
++    }
++
++    <T> List<T> getExtensions(Class<T> type, String pluginId);
++
++    /**
++     * Retrieves the extensions for the specified plugin.
++     *
++     * @param pluginId the unique plugin identifier, specified in its metadata
++     * @return the extensions for the plugin
++     */
++    List getExtensions(String pluginId);
++
++    default List getExtensions(String pluginId, ExtensionFilter filter) {
++        ExtensionFilter effectiveFilter = filter != null ? filter : ExtensionFilter.empty();
++        if (effectiveFilter.isEmpty()) {
++            return getExtensions(pluginId);
++        }
++
++        List extensions = new ArrayList();
++        for (Object extension : getExtensions(pluginId)) {
++            if (effectiveFilter.matches(this, extension.getClass())) {
++                extensions.add(extension);
++            }
++        }
++
++        return extensions;
++    }
++
++    Set<String> getExtensionClassNames(String pluginId);
++
++    ExtensionFactory getExtensionFactory();
++
++    /**
++     * The runtime mode. Must currently be either DEVELOPMENT or DEPLOYMENT.
++     */
++    RuntimeMode getRuntimeMode();
++
++    /**
++     * Returns {@code true} if the runtime mode is {@link RuntimeMode#DEVELOPMENT}.
++     */
++    default boolean isDevelopment() {
++        return RuntimeMode.DEVELOPMENT.equals(getRuntimeMode());
++    }
++
++    /**
++     * Returns {@code true} if the runtime mode is not {@link RuntimeMode#DEVELOPMENT}.
++     */
++    default boolean isNotDevelopment() {
++        return !isDevelopment();
++    }
++
++    /**
++     * Retrieves the {@link PluginWrapper} that loaded the given class 'clazz'.
++     */
++    PluginWrapper whichPlugin(Class<?> clazz);
++
++    void addPluginStateListener(PluginStateListener listener);
++
++    void removePluginStateListener(PluginStateListener listener);
++
++    /**
++     * Set the system version.  This is used to compare against the plugin
++     * requires attribute.  The default system version is 0.0.0 which
++     * disables all version checking.
++     *
++     * @default 0.0.0
++     * @param version the system version
++     */
++    void setSystemVersion(String version);
++
++    /**
++     * Returns the system version.
++     *
++     * @return the system version
++     */
++    String getSystemVersion();
++
++    /**
++     * Gets the first path of the folders where plugins are installed.
++     *
++     * @deprecated Use {@link #getPluginsRoots()} instead to get all paths where plugins are could be installed.
++     *
++     * @return Path of plugins root
++     */
++    @Deprecated
++    Path getPluginsRoot();
++
++    /**
++     * Gets a read-only list of all paths of the folders where plugins are installed.
++     *
++     * @return Paths of plugins roots
++     */
++    List<Path> getPluginsRoots();
++
++    VersionManager getVersionManager();
++
++}
+diff --git a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+index fa6406b..2d38f4f 100755
+--- a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
++++ b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+@@ -1,315 +1,394 @@
+-/*
+- * Copyright (C) 2012-present the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.pf4j;
+-
+-import kotlin.sequences.Sequence;
+-import org.junit.jupiter.api.AfterEach;
+-import org.junit.jupiter.api.Assertions;
+-import org.junit.jupiter.api.BeforeEach;
+-import org.junit.jupiter.api.Test;
+-import org.pf4j.test.JavaFileObjectClassLoader;
+-import org.pf4j.test.JavaFileObjectUtils;
+-import org.pf4j.test.JavaSources;
+-import org.pf4j.test.TestExtension;
+-import org.pf4j.test.TestExtensionPoint;
+-
+-import javax.tools.JavaFileObject;
+-import java.util.Collections;
+-import java.util.HashSet;
+-import java.util.LinkedHashMap;
+-import java.util.List;
+-import java.util.Map;
+-import java.util.Set;
+-import java.util.UUID;
+-
+-import static org.junit.jupiter.api.Assertions.assertEquals;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+-import static org.mockito.Mockito.mock;
+-import static org.mockito.Mockito.when;
+-
+-/**
+- * @author Mario Franco
+- */
+-class AbstractExtensionFinderTest {
+-
+-    private PluginManager pluginManager;
+-
+-    @BeforeEach
+-    public void setUp() {
+-        PluginWrapper pluginStarted = mock(PluginWrapper.class);
+-        when(pluginStarted.getPluginClassLoader()).thenReturn(getClass().getClassLoader());
+-        when(pluginStarted.getPluginState()).thenReturn(PluginState.STARTED);
+-
+-        PluginWrapper pluginStopped = mock(PluginWrapper.class);
+-        when(pluginStopped.getPluginClassLoader()).thenReturn(getClass().getClassLoader());
+-        when(pluginStopped.getPluginState()).thenReturn(PluginState.STOPPED);
+-
+-        pluginManager = mock(PluginManager.class);
+-        when(pluginManager.getPlugin("plugin1")).thenReturn(pluginStarted);
+-        when(pluginManager.getPlugin("plugin2")).thenReturn(pluginStopped);
+-        when(pluginManager.getPluginClassLoader("plugin1")).thenReturn(getClass().getClassLoader());
+-        when(pluginManager.getExtensionFactory()).thenReturn(new DefaultExtensionFactory());
+-    }
+-
+-    @AfterEach
+-    public void tearDown() {
+-        pluginManager = null;
+-        // Force garbage collection to clean up ClassLoaders from dynamic class loading tests
+-        // This helps prevent ClassLoader conflicts, especially on Java 11
+-        System.gc();
+-        // TODO: Test is still flaky, needs further investigation
+-    }
+-
+-    /**
+-     * Test of {@link AbstractExtensionFinder#find(Class)}.
+-     */
+-    @Test
+-    void testFindFailType() {
+-        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+-
+-            @Override
+-            public Map<String, Set<String>> readPluginsStorages() {
+-                return Collections.emptyMap();
+-            }
+-
+-            @Override
+-            public Map<String, Set<String>> readClasspathStorages() {
+-                return Collections.emptyMap();
+-            }
+-
+-        };
+-        List<ExtensionWrapper<TestExtension>> list = instance.find(TestExtension.class);
+-        assertEquals(0, list.size());
+-    }
+-
+-    /**
+-     * Test of {@link AbstractExtensionFinder#find(Class)}.
+-     */
+-    @Test
+-    void testFindFromClasspath() {
+-        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+-
+-            @Override
+-            public Map<String, Set<String>> readPluginsStorages() {
+-                return Collections.emptyMap();
+-            }
+-
+-            @Override
+-            public Map<String, Set<String>> readClasspathStorages() {
+-                Map<String, Set<String>> entries = new LinkedHashMap<>();
+-
+-                Set<String> bucket = new HashSet<>();
+-                bucket.add("org.pf4j.test.TestExtension");
+-                entries.put(null, bucket);
+-
+-                return entries;
+-            }
+-
+-        };
+-
+-        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class);
+-        assertEquals(1, list.size());
+-    }
+-
+-    /**
+-     * Test of {@link AbstractExtensionFinder#find(Class, String)}.
+-     */
+-    @Test
+-    void testFindFromPlugin() {
+-        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+-
+-            @Override
+-            public Map<String, Set<String>> readPluginsStorages() {
+-                Map<String, Set<String>> entries = new LinkedHashMap<>();
+-
+-                Set<String> bucket = new HashSet<>();
+-                bucket.add("org.pf4j.test.TestExtension");
+-                entries.put("plugin1", bucket);
+-                bucket = new HashSet<>();
+-                bucket.add("org.pf4j.test.TestExtension");
+-                entries.put("plugin2", bucket);
+-
+-                return entries;
+-            }
+-
+-            @Override
+-            public Map<String, Set<String>> readClasspathStorages() {
+-                return Collections.emptyMap();
+-            }
+-
+-        };
+-
+-        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class);
+-        assertEquals(1, list.size());
+-
+-        list = instance.find(TestExtensionPoint.class, "plugin1");
+-        assertEquals(1, list.size());
+-
+-        list = instance.find(TestExtensionPoint.class, "plugin2");
+-        // "0" because the status of "plugin2" is STOPPED => no extensions
+-        assertEquals(0, list.size());
+-    }
+-
+-    /**
+-     * Test of {@link AbstractExtensionFinder#findClassNames(String)}.
+-     */
+-    @Test
+-    void testFindClassNames() {
+-        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+-
+-            @Override
+-            public Map<String, Set<String>> readPluginsStorages() {
+-                Map<String, Set<String>> entries = new LinkedHashMap<>();
+-
+-                Set<String> bucket = new HashSet<>();
+-                bucket.add("org.pf4j.plugin.TestExtension");
+-                entries.put("plugin1", bucket);
+-
+-                return entries;
+-            }
+-
+-            @Override
+-            public Map<String, Set<String>> readClasspathStorages() {
+-                Map<String, Set<String>> entries = new LinkedHashMap<>();
+-
+-                Set<String> bucket = new HashSet<>();
+-                bucket.add("org.pf4j.plugin.TestExtension");
+-                bucket.add("org.pf4j.plugin.FailTestExtension");
+-                entries.put(null, bucket);
+-
+-                return entries;
+-            }
+-
+-        };
+-
+-        Set<String> result = instance.findClassNames(null);
+-        assertEquals(2, result.size());
+-
+-        result = instance.findClassNames("plugin1");
+-        assertEquals(1, result.size());
+-    }
+-
+-    /**
+-     * Test of {@link org.pf4j.AbstractExtensionFinder#find(java.lang.String)}.
+-     */
+-    @Test
+-    void testFindExtensionWrappersFromPluginId() {
+-        // complicate the test to show hot to deal with dynamic Java classes (generated at runtime from sources)
+-        PluginWrapper plugin3 = mock(PluginWrapper.class);
+-        JavaFileObject object = JavaSources.compile(DefaultExtensionFactoryTest.FailTestExtension);
+-        JavaFileObjectClassLoader classLoader = new JavaFileObjectClassLoader();
+-        classLoader.load(object);
+-        when(plugin3.getPluginClassLoader()).thenReturn(classLoader);
+-        when(plugin3.getPluginState()).thenReturn(PluginState.STARTED);
+-        when(pluginManager.getPluginClassLoader("plugin3")).thenReturn(classLoader);
+-        when(pluginManager.getPlugin("plugin3")).thenReturn(plugin3);
+-
+-        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
+-
+-            @Override
+-            public Map<String, Set<String>> readPluginsStorages() {
+-                Map<String, Set<String>> entries = new LinkedHashMap<>();
+-
+-                Set<String> bucket = new HashSet<>();
+-                bucket.add("org.pf4j.test.TestExtension");
+-                entries.put("plugin1", bucket);
+-                bucket = new HashSet<>();
+-                bucket.add("org.pf4j.test.TestExtension");
+-                entries.put("plugin2", bucket);
+-                bucket = new HashSet<>();
+-                bucket.add(JavaFileObjectUtils.getClassName(object));
+-                entries.put("plugin3", bucket);
+-
+-                return entries;
+-            }
+-
+-            @Override
+-            public Map<String, Set<String>> readClasspathStorages() {
+-                return Collections.emptyMap();
+-            }
+-
+-        };
+-
+-        List<ExtensionWrapper> plugin1Result = instance.find("plugin1");
+-        assertEquals(1, plugin1Result.size());
+-
+-        List<ExtensionWrapper> plugin2Result = instance.find("plugin2");
+-        assertEquals(0, plugin2Result.size());
+-
+-        List<ExtensionWrapper> plugin3Result = instance.find("plugin3");
+-        assertEquals(1, plugin3Result.size());
+-
+-        List<ExtensionWrapper> plugin4Result = instance.find(UUID.randomUUID().toString());
+-        assertEquals(0, plugin4Result.size());
+-    }
+-
+-    @Test
+-    void findExtensionAnnotation() {
+-        List<JavaFileObject> generatedFiles = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING);
+-        assertEquals(2, generatedFiles.size());
+-
+-        Map<String, Class<?>> loadedClasses = new JavaFileObjectClassLoader().load(generatedFiles);
+-        Class<?> clazz = loadedClasses.get(JavaSources.WHAZZUP_GREETING_CLASS_NAME);
+-        Extension extension = AbstractExtensionFinder.findExtensionAnnotation(clazz);
+-        Assertions.assertNotNull(extension);
+-    }
+-
+-    @Test
+-    void findExtensionAnnotationThatMissing() {
+-        List<JavaFileObject> generatedFiles = JavaSources.compileAll(JavaSources.GREETING,
+-            ExtensionAnnotationProcessorTest.SpinnakerExtension_NoExtension,
+-            ExtensionAnnotationProcessorTest.WhazzupGreeting_SpinnakerExtension);
+-        assertEquals(3, generatedFiles.size());
+-
+-        Map<String, Class<?>> loadedClasses = new JavaFileObjectClassLoader().load(generatedFiles);
+-        Class<?> clazz = loadedClasses.get(JavaSources.WHAZZUP_GREETING_CLASS_NAME);
+-        Extension extension = AbstractExtensionFinder.findExtensionAnnotation(clazz);
+-        Assertions.assertNull(extension);
+-    }
+-
+-    // This is a regression test, as this caused an StackOverflowError with the previous implementation
+-    @Test
+-    public void runningOnNonExtensionKotlinClassDoesNotThrowException() {
+-        Extension result = AbstractExtensionFinder.findExtensionAnnotation(Sequence.class);
+-
+-        Assertions.assertNull(result);
+-    }
+-
+-    @Test
+-    void checkDifferentClassLoaders() {
+-        AbstractExtensionFinder extensionFinder = new AbstractExtensionFinder(pluginManager) {
+-
+-            @Override
+-            public Map<String, Set<String>> readPluginsStorages() {
+-                return Collections.emptyMap();
+-            }
+-
+-            @Override
+-            public Map<String, Set<String>> readClasspathStorages() {
+-                return Collections.emptyMap();
+-            }
+-
+-        };
+-
+-        List<JavaFileObject> generatedFiles = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING);
+-        assertEquals(2, generatedFiles.size());
+-        Class<?> extensionPointClass = new JavaFileObjectClassLoader().load(generatedFiles).get(JavaSources.GREETING_CLASS_NAME);
+-        Class<?> extensionClass = new JavaFileObjectClassLoader().load(generatedFiles).get(JavaSources.WHAZZUP_GREETING_CLASS_NAME);
+-
+-        assertTrue(extensionFinder.checkDifferentClassLoaders(extensionPointClass, extensionClass));
+-    }
+-
+-}
++/*
++ * Copyright (C) 2012-present the original author or authors.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.pf4j;
++
++import kotlin.sequences.Sequence;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.pf4j.test.JavaFileObjectClassLoader;
++import org.pf4j.test.JavaFileObjectUtils;
++import org.pf4j.test.JavaSources;
++import org.pf4j.test.TestExtension;
++import org.pf4j.test.TestExtensionPoint;
++
++import javax.tools.JavaFileObject;
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++/**
++ * @author Mario Franco
++ */
++class AbstractExtensionFinderTest {
++
++    private PluginManager pluginManager;
++
++    @BeforeEach
++    public void setUp() {
++        PluginWrapper pluginStarted = mock(PluginWrapper.class);
++        when(pluginStarted.getPluginClassLoader()).thenReturn(getClass().getClassLoader());
++        when(pluginStarted.getPluginState()).thenReturn(PluginState.STARTED);
++
++        PluginWrapper pluginStopped = mock(PluginWrapper.class);
++        when(pluginStopped.getPluginClassLoader()).thenReturn(getClass().getClassLoader());
++        when(pluginStopped.getPluginState()).thenReturn(PluginState.STOPPED);
++
++        pluginManager = mock(PluginManager.class);
++        when(pluginManager.getPlugin("plugin1")).thenReturn(pluginStarted);
++        when(pluginManager.getPlugin("plugin2")).thenReturn(pluginStopped);
++        when(pluginManager.getPluginClassLoader("plugin1")).thenReturn(getClass().getClassLoader());
++        when(pluginManager.getExtensionFactory()).thenReturn(new DefaultExtensionFactory());
++    }
++
++    @AfterEach
++    public void tearDown() {
++        pluginManager = null;
++        System.gc();
++    }
++
++    @Test
++    void testFindFailType() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                return Collections.emptyMap();
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++        List<ExtensionWrapper<TestExtension>> list = instance.find(TestExtension.class);
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    void testFindFromClasspath() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                return Collections.emptyMap();
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put(null, bucket);
++
++                return entries;
++            }
++
++        };
++
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class);
++        assertEquals(1, list.size());
++    }
++
++    @Test
++    void testFindFromPlugin() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++                bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin2", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class);
++        assertEquals(1, list.size());
++
++        list = instance.find(TestExtensionPoint.class, "plugin1");
++        assertEquals(1, list.size());
++
++        list = instance.find(TestExtensionPoint.class, "plugin2");
++        assertEquals(0, list.size());
++    }
++
++    @Test
++    void testFindClassNames() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.plugin.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.plugin.TestExtension");
++                bucket.add("org.pf4j.plugin.FailTestExtension");
++                entries.put(null, bucket);
++
++                return entries;
++            }
++
++        };
++
++        Set<String> result = instance.findClassNames(null);
++        assertEquals(2, result.size());
++
++        result = instance.findClassNames("plugin1");
++        assertEquals(1, result.size());
++    }
++
++    @Test
++    void testFindClassNamesWithFilterUsesDedicatedCache() {
++        AtomicInteger filteredEntriesCreated = new AtomicInteger();
++        AbstractExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++                entries.put("plugin1", linkedSet(TestExtension.class.getName(), SpecializedTestExtension.class.getName()));
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++            @Override
++            protected Map<String, Set<String>> createFilteredEntries(ExtensionFilter filter) {
++                filteredEntriesCreated.incrementAndGet();
++                return super.createFilteredEntries(filter);
++            }
++
++        };
++
++        ExtensionFilter filter = ExtensionFilter.builder()
++            .pluginId("plugin1")
++            .extensionClassName(SpecializedTestExtension.class.getName())
++            .build();
++
++        Set<String> first = instance.findClassNames("plugin1", filter);
++        Set<String> second = instance.findClassNames("plugin1", filter);
++        Set<String> unfiltered = instance.findClassNames("plugin1");
++
++        assertEquals(Collections.singleton(SpecializedTestExtension.class.getName()), first);
++        assertEquals(first, second);
++        assertEquals(1, filteredEntriesCreated.get());
++        assertEquals(2, unfiltered.size());
++        assertTrue(unfiltered.contains(TestExtension.class.getName()));
++        assertTrue(unfiltered.contains(SpecializedTestExtension.class.getName()));
++    }
++
++    @Test
++    void testFindWithCombinedFilters() {
++        ExtensionFinder instance = createFilterableFinder();
++        ExtensionFilter filter = ExtensionFilter.builder()
++            .pluginId("plugin1")
++            .extensionClassName(SpecializedTestExtension.class.getName())
++            .extensionType(TestExtension.class)
++            .build();
++
++        List<ExtensionWrapper<TestExtensionPoint>> list = instance.find(TestExtensionPoint.class, filter);
++
++        assertEquals(1, list.size());
++        assertSame(SpecializedTestExtension.class, list.get(0).getDescriptor().extensionClass);
++    }
++
++    @Test
++    void testFindWithFilterNoResult() {
++        ExtensionFinder instance = createFilterableFinder();
++        ExtensionFilter filter = ExtensionFilter.builder()
++            .pluginId("plugin1")
++            .extensionClassName(TestExtension.class.getName())
++            .extensionType(SpecializedTestExtension.class)
++            .build();
++
++        assertTrue(instance.find(TestExtensionPoint.class, filter).isEmpty());
++        assertTrue(instance.find("plugin1", filter).isEmpty());
++    }
++
++    @Test
++    void testFindExtensionWrappersFromPluginId() {
++        PluginWrapper plugin3 = mock(PluginWrapper.class);
++        JavaFileObject object = JavaSources.compile(DefaultExtensionFactoryTest.FailTestExtension);
++        JavaFileObjectClassLoader classLoader = new JavaFileObjectClassLoader();
++        classLoader.load(object);
++        when(plugin3.getPluginClassLoader()).thenReturn(classLoader);
++        when(plugin3.getPluginState()).thenReturn(PluginState.STARTED);
++        when(pluginManager.getPluginClassLoader("plugin3")).thenReturn(classLoader);
++        when(pluginManager.getPlugin("plugin3")).thenReturn(plugin3);
++
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++                bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin2", bucket);
++                bucket = new HashSet<>();
++                bucket.add(JavaFileObjectUtils.getClassName(object));
++                entries.put("plugin3", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        List<ExtensionWrapper> plugin1Result = instance.find("plugin1");
++        assertEquals(1, plugin1Result.size());
++
++        List<ExtensionWrapper> plugin2Result = instance.find("plugin2");
++        assertEquals(0, plugin2Result.size());
++
++        List<ExtensionWrapper> plugin3Result = instance.find("plugin3");
++        assertEquals(1, plugin3Result.size());
++
++        List<ExtensionWrapper> plugin4Result = instance.find(UUID.randomUUID().toString());
++        assertEquals(0, plugin4Result.size());
++    }
++
++    @Test
++    void findExtensionAnnotation() {
++        List<JavaFileObject> generatedFiles = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING);
++        assertEquals(2, generatedFiles.size());
++
++        Map<String, Class<?>> loadedClasses = new JavaFileObjectClassLoader().load(generatedFiles);
++        Class<?> clazz = loadedClasses.get(JavaSources.WHAZZUP_GREETING_CLASS_NAME);
++        Extension extension = AbstractExtensionFinder.findExtensionAnnotation(clazz);
++        Assertions.assertNotNull(extension);
++    }
++
++    @Test
++    void findExtensionAnnotationThatMissing() {
++        List<JavaFileObject> generatedFiles = JavaSources.compileAll(JavaSources.GREETING,
++            ExtensionAnnotationProcessorTest.SpinnakerExtension_NoExtension,
++            ExtensionAnnotationProcessorTest.WhazzupGreeting_SpinnakerExtension);
++        assertEquals(3, generatedFiles.size());
++
++        Map<String, Class<?>> loadedClasses = new JavaFileObjectClassLoader().load(generatedFiles);
++        Class<?> clazz = loadedClasses.get(JavaSources.WHAZZUP_GREETING_CLASS_NAME);
++        Extension extension = AbstractExtensionFinder.findExtensionAnnotation(clazz);
++        Assertions.assertNull(extension);
++    }
++
++    @Test
++    public void runningOnNonExtensionKotlinClassDoesNotThrowException() {
++        Extension result = AbstractExtensionFinder.findExtensionAnnotation(Sequence.class);
++
++        Assertions.assertNull(result);
++    }
++
++    @Test
++    void checkDifferentClassLoaders() {
++        AbstractExtensionFinder extensionFinder = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                return Collections.emptyMap();
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        List<JavaFileObject> generatedFiles = JavaSources.compileAll(JavaSources.GREETING, JavaSources.WHAZZUP_GREETING);
++        assertEquals(2, generatedFiles.size());
++        Class<?> extensionPointClass = new JavaFileObjectClassLoader().load(generatedFiles).get(JavaSources.GREETING_CLASS_NAME);
++        Class<?> extensionClass = new JavaFileObjectClassLoader().load(generatedFiles).get(JavaSources.WHAZZUP_GREETING_CLASS_NAME);
++
++        assertTrue(extensionFinder.checkDifferentClassLoaders(extensionPointClass, extensionClass));
++    }
++
++    private ExtensionFinder createFilterableFinder() {
++        return new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++                entries.put("plugin1", linkedSet(TestExtension.class.getName(), SpecializedTestExtension.class.getName()));
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++    }
++
++    private static Set<String> linkedSet(String... values) {
++        return new LinkedHashSet<>(Arrays.asList(values));
++    }
++
++    @Extension
++    public static class SpecializedTestExtension extends TestExtension {
++    }
++
++}
+diff --git a/src/test/java/org/pf4j/AbstractPluginManagerTest.java b/src/test/java/org/pf4j/AbstractPluginManagerTest.java
+index c2fdf5f..edde116 100755
+--- a/src/test/java/org/pf4j/AbstractPluginManagerTest.java
++++ b/src/test/java/org/pf4j/AbstractPluginManagerTest.java
+@@ -73,6 +73,29 @@ public class AbstractPluginManagerTest {
+         assertEquals(1, extensions.size());
+     }
+ 
++    @Test
++    public void getExtensionsByTypeAndFilter() {
++        PluginWrapper plugin1 = mock(PluginWrapper.class);
++        when(plugin1.getPluginId()).thenReturn("plugin1");
++
++        PluginWrapper plugin2 = mock(PluginWrapper.class);
++        when(plugin2.getPluginId()).thenReturn("plugin2");
++
++        doReturn(Arrays.asList(new TestExtension(), new FilteredTestExtension())).when(pluginManager).getExtensions(TestExtensionPoint.class);
++        doReturn(plugin1).when(pluginManager).whichPlugin(TestExtension.class);
++        doReturn(plugin2).when(pluginManager).whichPlugin(FilteredTestExtension.class);
++
++        ExtensionFilter filter = ExtensionFilter.builder()
++            .pluginId("plugin2")
++            .extensionClassName(FilteredTestExtension.class.getName())
++            .extensionType(TestExtension.class)
++            .build();
++
++        List<TestExtensionPoint> extensions = pluginManager.getExtensions(TestExtensionPoint.class, filter);
++        assertEquals(1, extensions.size());
++        assertSame(FilteredTestExtension.class, extensions.get(0).getClass());
++    }
++
+     @Test
+     public void getVersion() {
+         assertNotEquals("0.0.0", pluginManager.getVersion());
+@@ -130,7 +153,6 @@ public class AbstractPluginManagerTest {
+         pluginManager.addPlugin(pluginWrapper2);
+         pluginManager.resolveDependencies();
+ 
+-        // reset the mock to not count the explicit call of resolveDependencies
+         reset(pluginManager);
+ 
+         pluginManager.unloadPlugin("plugin2", true);
+@@ -174,6 +196,10 @@ public class AbstractPluginManagerTest {
+         return pluginWrapper;
+     }
+ 
++    @Extension
++    public static class FilteredTestExtension extends TestExtension {
++    }
++
+     static abstract class AbstractPluginManagerWithDefaultVersionManager extends AbstractPluginManager {
+ 
+         public AbstractPluginManagerWithDefaultVersionManager() {
