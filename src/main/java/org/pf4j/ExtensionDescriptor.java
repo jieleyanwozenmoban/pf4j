@@ -19,17 +19,23 @@ package org.pf4j;
  * Describes an extension.
  * The extension is described by the class and the ordinal (the order of the extension).
 
- *
+
  * @author Decebal Suiu
  */
 public class ExtensionDescriptor {
 
     public final int ordinal;
     public final Class<?> extensionClass;
+    public final String pluginId;
 
     public ExtensionDescriptor(int ordinal, Class<?> extensionClass) {
+        this(ordinal, extensionClass, null);
+    }
+
+    public ExtensionDescriptor(int ordinal, Class<?> extensionClass, String pluginId) {
         this.ordinal = ordinal;
         this.extensionClass = extensionClass;
+        this.pluginId = pluginId;
     }
 
 }

@@ -1,0 +1,365 @@
+diff --git a/src/main/java/org/pf4j/AbstractExtensionFinder.java b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+index b924211..2007853 100755
+--- a/src/main/java/org/pf4j/AbstractExtensionFinder.java
++++ b/src/main/java/org/pf4j/AbstractExtensionFinder.java
+@@ -141,7 +141,7 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+ 
+                 log.debug("Checking extension type '{}'", className);
+                 if (type.isAssignableFrom(extensionClass)) {
+-                    ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
++                    ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass, pluginId);
+                     result.add(extensionWrapper);
+                     log.debug("Added extension '{}' with ordinal {}", className, extensionWrapper.getOrdinal());
+                 } else {
+@@ -167,6 +167,26 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+         return result;
+     }
+ 
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
++        log.debug("Finding extensions of extension point '{}' with filter", type.getName());
++        List<ExtensionWrapper<T>> allExtensions = find(type);
++        if (filter == null) {
++            return allExtensions;
++        }
++        return filter.apply(allExtensions);
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
++        log.debug("Finding extensions of plugin '{}' with filter", pluginId);
++        List<ExtensionWrapper> allExtensions = find(pluginId);
++        if (filter == null) {
++            return allExtensions;
++        }
++        return filter.apply(allExtensions);
++    }
++
+     @Override
+     public List<ExtensionWrapper> find(String pluginId) {
+         log.debug("Finding extensions from plugin '{}'", pluginId);
+@@ -195,7 +215,7 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+                 log.debug("Loading class '{}' using class loader '{}'", className, classLoader);
+                 Class<?> extensionClass = classLoader.loadClass(className);
+ 
+-                ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass);
++                ExtensionWrapper extensionWrapper = createExtensionWrapper(extensionClass, pluginId);
+                 result.add(extensionWrapper);
+                 log.debug("Added extension '{}' with ordinal {}", className, extensionWrapper.getOrdinal());
+             } catch (ClassNotFoundException | NoClassDefFoundError e) {
+@@ -344,14 +364,19 @@ public abstract class AbstractExtensionFinder implements ExtensionFinder, Plugin
+         return extensionInfos.get(className);
+     }
+ 
+-    private ExtensionWrapper createExtensionWrapper(Class<?> extensionClass) {
++    private ExtensionWrapper createExtensionWrapper(Class<?> extensionClass, String pluginId) {
+         Extension extensionAnnotation = findExtensionAnnotation(extensionClass);
+         int ordinal = extensionAnnotation != null ? extensionAnnotation.ordinal() : 0;
+-        ExtensionDescriptor descriptor = new ExtensionDescriptor(ordinal, extensionClass);
++        ExtensionDescriptor descriptor = new ExtensionDescriptor(ordinal, extensionClass, pluginId);
+ 
+         return new ExtensionWrapper<>(descriptor, pluginManager.getExtensionFactory());
+     }
+ 
++    @Deprecated
++    private ExtensionWrapper createExtensionWrapper(Class<?> extensionClass) {
++        return createExtensionWrapper(extensionClass, null);
++    }
++
+     public static Extension findExtensionAnnotation(Class<?> clazz) {
+         if (clazz.isAnnotationPresent(Extension.class)) {
+             return clazz.getAnnotation(Extension.class);
+diff --git a/src/main/java/org/pf4j/DefaultExtensionFinder.java b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+index 1a6fc6b..010d9c3 100755
+--- a/src/main/java/org/pf4j/DefaultExtensionFinder.java
++++ b/src/main/java/org/pf4j/DefaultExtensionFinder.java
+@@ -78,6 +78,26 @@ public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListe
+         return classNames;
+     }
+ 
++    @Override
++    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
++        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(type, filter));
++        }
++
++        return extensions;
++    }
++
++    @Override
++    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
++        List<ExtensionWrapper> extensions = new ArrayList<>();
++        for (ExtensionFinder finder : finders) {
++            extensions.addAll(finder.find(pluginId, filter));
++        }
++
++        return extensions;
++    }
++
+     @Override
+     public void pluginStateChanged(PluginStateEvent event) {
+         for (ExtensionFinder finder : finders) {
+diff --git a/src/main/java/org/pf4j/ExtensionDescriptor.java b/src/main/java/org/pf4j/ExtensionDescriptor.java
+index c3172c8..447f780 100755
+--- a/src/main/java/org/pf4j/ExtensionDescriptor.java
++++ b/src/main/java/org/pf4j/ExtensionDescriptor.java
+@@ -1,35 +1,41 @@
+-/*
+- * Copyright (C) 2012-present the original author or authors.
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.pf4j;
+-
+-/**
+- * Describes an extension.
+- * The extension is described by the class and the ordinal (the order of the extension).
+-
+- *
+- * @author Decebal Suiu
+- */
+-public class ExtensionDescriptor {
+-
+-    public final int ordinal;
+-    public final Class<?> extensionClass;
+-
+-    public ExtensionDescriptor(int ordinal, Class<?> extensionClass) {
+-        this.ordinal = ordinal;
+-        this.extensionClass = extensionClass;
+-    }
+-
++/*
++ * Copyright (C) 2012-present the original author or authors.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.pf4j;
++
++/**
++ * Describes an extension.
++ * The extension is described by the class and the ordinal (the order of the extension).
++
++
++ * @author Decebal Suiu
++ */
++public class ExtensionDescriptor {
++
++    public final int ordinal;
++    public final Class<?> extensionClass;
++    public final String pluginId;
++
++    public ExtensionDescriptor(int ordinal, Class<?> extensionClass) {
++        this(ordinal, extensionClass, null);
++    }
++
++    public ExtensionDescriptor(int ordinal, Class<?> extensionClass, String pluginId) {
++        this.ordinal = ordinal;
++        this.extensionClass = extensionClass;
++        this.pluginId = pluginId;
++    }
++
+ }
+diff --git a/src/main/java/org/pf4j/ExtensionFinder.java b/src/main/java/org/pf4j/ExtensionFinder.java
+index 83d85ab..2dd7afa 100755
+--- a/src/main/java/org/pf4j/ExtensionFinder.java
++++ b/src/main/java/org/pf4j/ExtensionFinder.java
+@@ -45,4 +45,14 @@ public interface ExtensionFinder {
+      */
+     Set<String> findClassNames(String pluginId);
+ 
++    /**
++     * Retrieves a list with all extensions found for an extension point, filtered by the given filter.
++     */
++    <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter);
++
++    /**
++     * Retrieves a list with all extensions found for a plugin, filtered by the given filter.
++     */
++    List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter);
++
+ }
+diff --git a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+index fa6406b..fe28dca 100755
+--- a/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
++++ b/src/test/java/org/pf4j/AbstractExtensionFinderTest.java
+@@ -312,4 +312,159 @@ class AbstractExtensionFinderTest {
+         assertTrue(extensionFinder.checkDifferentClassLoaders(extensionPointClass, extensionClass));
+     }
+ 
++    @Test
++    void testFindWithFilterByPluginId() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket1 = new HashSet<>();
++                bucket1.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket1);
++
++                Set<String> bucket2 = new HashSet<>();
++                bucket2.add("org.pf4j.test.TestExtension");
++                entries.put("plugin2", bucket2);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                return Collections.emptyMap();
++            }
++
++        };
++
++        // Test without filter
++        List<ExtensionWrapper<TestExtensionPoint>> allExtensions = instance.find(TestExtensionPoint.class);
++        assertEquals(1, allExtensions.size()); // Only plugin1 is started
++
++        // Test with filter by plugin1
++        ExtensionFilter filterPlugin1 = ExtensionFilter.builder()
++            .pluginId("plugin1")
++            .build();
++        List<ExtensionWrapper<TestExtensionPoint>> filteredByPlugin1 = instance.find(TestExtensionPoint.class, filterPlugin1);
++        assertEquals(1, filteredByPlugin1.size());
++        assertEquals("plugin1", filteredByPlugin1.get(0).getDescriptor().pluginId);
++
++        // Test with filter by plugin2 (which is stopped, should return 0)
++        ExtensionFilter filterPlugin2 = ExtensionFilter.builder()
++            .pluginId("plugin2")
++            .build();
++        List<ExtensionWrapper<TestExtensionPoint>> filteredByPlugin2 = instance.find(TestExtensionPoint.class, filterPlugin2);
++        assertEquals(0, filteredByPlugin2.size());
++    }
++
++    @Test
++    void testFindWithFilterByClassName() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                return Collections.emptyMap();
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put(null, bucket);
++
++                return entries;
++            }
++
++        };
++
++        // Test with filter by correct class name
++        ExtensionFilter filterCorrectClass = ExtensionFilter.builder()
++            .className("org.pf4j.test.TestExtension")
++            .build();
++        List<ExtensionWrapper<TestExtensionPoint>> filteredByCorrectClass = instance.find(TestExtensionPoint.class, filterCorrectClass);
++        assertEquals(1, filteredByCorrectClass.size());
++
++        // Test with filter by wrong class name
++        ExtensionFilter filterWrongClass = ExtensionFilter.builder()
++            .className("org.pf4j.test.NonExistentExtension")
++            .build();
++        List<ExtensionWrapper<TestExtensionPoint>> filteredByWrongClass = instance.find(TestExtensionPoint.class, filterWrongClass);
++        assertEquals(0, filteredByWrongClass.size());
++    }
++
++    @Test
++    void testFindWithMultipleFilters() {
++        ExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put("plugin1", bucket);
++
++                return entries;
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put(null, bucket);
++
++                return entries;
++            }
++
++        };
++
++        // Test with multiple filters (plugin1 and type)
++        ExtensionFilter filterMultiple = ExtensionFilter.builder()
++            .pluginId("plugin1")
++            .type(TestExtensionPoint.class)
++            .build();
++        List<ExtensionWrapper<TestExtensionPoint>> filteredMultiple = instance.find(TestExtensionPoint.class, filterMultiple);
++        assertEquals(1, filteredMultiple.size());
++        assertEquals("plugin1", filteredMultiple.get(0).getDescriptor().pluginId);
++    }
++
++    @Test
++    void testNoCachePollution() {
++        AbstractExtensionFinder instance = new AbstractExtensionFinder(pluginManager) {
++
++            @Override
++            public Map<String, Set<String>> readPluginsStorages() {
++                return Collections.emptyMap();
++            }
++
++            @Override
++            public Map<String, Set<String>> readClasspathStorages() {
++                Map<String, Set<String>> entries = new LinkedHashMap<>();
++
++                Set<String> bucket = new HashSet<>();
++                bucket.add("org.pf4j.test.TestExtension");
++                entries.put(null, bucket);
++
++                return entries;
++            }
++
++        };
++
++        // First, find with filter (should not affect the cache)
++        ExtensionFilter filter = ExtensionFilter.builder()
++            .className("org.pf4j.test.NonExistentExtension")
++            .build();
++        List<ExtensionWrapper<TestExtensionPoint>> filtered = instance.find(TestExtensionPoint.class, filter);
++        assertEquals(0, filtered.size());
++
++        // Then, find without filter (should still return all extensions)
++        List<ExtensionWrapper<TestExtensionPoint>> unfiltered = instance.find(TestExtensionPoint.class);
++        assertEquals(1, unfiltered.size());
++    }
++
+ }
