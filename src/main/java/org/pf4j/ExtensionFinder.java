@@ -36,9 +36,51 @@ public interface ExtensionFinder {
     <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId);
 
     /**
+     * Retrieves a list with all extensions found for an extension point,
+     * filtered by the given filter criteria.
+     *
+     * @param type the extension point type
+     * @param filter the filter to apply to extension results
+     * @return list of matching extensions, never null
+     */
+    <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter);
+
+    /**
+     * Retrieves a list with all extensions found for an extension point and a plugin,
+     * filtered by the given filter criteria.
+     *
+     * @param type the extension point type
+     * @param pluginId the plugin id to scope the search
+     * @param filter the filter to apply to extension results
+     * @return list of matching extensions, never null
+     */
+    <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter);
+
+    /**
      * Retrieves a list with all extensions found for a plugin.
      */
     List<ExtensionWrapper> find(String pluginId);
+
+    /**
+     * Retrieves a list with all extensions found for a plugin,
+     * filtered by the given filter criteria.
+     *
+     * @param pluginId the plugin id to scope the search
+     * @param filter the filter to apply to extension results
+     * @return list of matching extensions, never null
+     */
+    List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter);
+
+    /**
+     * Retrieves a list with all extensions found for a plugin,
+     * filtered by the given filter criteria.
+     *
+     * @param pluginId the plugin id to scope the search
+     * @param classNames set of class names to filter by
+     * @param filter the filter to apply to extension results
+     * @return list of matching extensions, never null
+     */
+    List<ExtensionWrapper> find(String pluginId, Set<String> classNames, ExtensionFilter filter);
 
     /**
      * Retrieves a list with all extension class names found for a plugin.

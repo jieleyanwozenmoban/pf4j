@@ -59,10 +59,50 @@ public class DefaultExtensionFinder implements ExtensionFinder, PluginStateListe
     }
 
     @Override
+    public <T> List<ExtensionWrapper<T>> find(Class<T> type, ExtensionFilter filter) {
+        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
+        for (ExtensionFinder finder : finders) {
+            extensions.addAll(finder.find(type, filter));
+        }
+
+        return extensions;
+    }
+
+    @Override
+    public <T> List<ExtensionWrapper<T>> find(Class<T> type, String pluginId, ExtensionFilter filter) {
+        List<ExtensionWrapper<T>> extensions = new ArrayList<>();
+        for (ExtensionFinder finder : finders) {
+            extensions.addAll(finder.find(type, pluginId, filter));
+        }
+
+        return extensions;
+    }
+
+    @Override
     public List<ExtensionWrapper> find(String pluginId) {
         List<ExtensionWrapper> extensions = new ArrayList<>();
         for (ExtensionFinder finder : finders) {
             extensions.addAll(finder.find(pluginId));
+        }
+
+        return extensions;
+    }
+
+    @Override
+    public List<ExtensionWrapper> find(String pluginId, ExtensionFilter filter) {
+        List<ExtensionWrapper> extensions = new ArrayList<>();
+        for (ExtensionFinder finder : finders) {
+            extensions.addAll(finder.find(pluginId, filter));
+        }
+
+        return extensions;
+    }
+
+    @Override
+    public List<ExtensionWrapper> find(String pluginId, Set<String> classNames, ExtensionFilter filter) {
+        List<ExtensionWrapper> extensions = new ArrayList<>();
+        for (ExtensionFinder finder : finders) {
+            extensions.addAll(finder.find(pluginId, classNames, filter));
         }
 
         return extensions;
