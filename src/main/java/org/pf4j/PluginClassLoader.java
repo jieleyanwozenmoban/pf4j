@@ -153,7 +153,16 @@ public class PluginClassLoader extends URLClassLoader {
                             c = findClass(className);
                             break;
                         case DEPENDENCIES:
-                            c = loadClassFromDependencies(className);
+                            if (getParent() != null) {
+                                try {
+                                    c = getParent().loadClass(className);
+                                    log.trace("Found class '{}' in parent classloader, using it instead of dependencies", className);
+                                } catch (ClassNotFoundException e) {
+                                    c = loadClassFromDependencies(className);
+                                }
+                            } else {
+                                c = loadClassFromDependencies(className);
+                            }
                             break;
                     }
                 } catch (ClassNotFoundException ignored) {}

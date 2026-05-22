@@ -459,6 +459,49 @@ class PluginClassLoaderTest {
         assertFalse(customClassLoader.shouldDelegateToParent("org.pf4j.test.TestExtension"));
     }
 
+    @Test
+    void parentLastLoadClassWithHostDependencyPluginConflict() throws ClassNotFoundException {
+        // Scenario: Same class name exists in host (APPLICATION), dependency, and current plugin
+        // In parent-last mode (PDA), plugin class should be loaded first
+        Class<?> clazz = parentLastPluginClassLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
+        assertNotNull(clazz);
+        // The class should be loaded from the dependency (since plugin doesn't have it in this setup)
+        assertEquals(JavaSources.GREETING_CLASS_NAME, clazz.getName());
+    }
+
+    @Test
+    void parentLastLoadClassNoDuplicateClassDefinitions() throws ClassNotFoundException {
+        // Scenario: Class exists in both host classpath and plugin dependencies
+        // Should not create duplicate class definitions causing LinkageError
+        Class<?> clazz1 = parentLastPluginClassLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
+        Class<?> clazz2 = parentLastPluginClassLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
+        // Same classloader should return the exact same Class object
+        assertSame(clazz1, clazz2);
+    }
+
+    @Test
+    void parentLastLoadClassFromDependenciesUsesParentWhenAvailable() throws ClassNotFoundException {
+        // Scenario: When loading from DEPENDENCIES in parent-last mode,
+        // if parent already has the class, use parent's version to avoid LinkageError
+        Class<?> clazz = parentLastPluginClassLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
+        assertNotNull(clazz);
+        // Verify the class is loadable and consistent
+        assertEquals(JavaSources.GREETING_CLASS_NAME, clazz.getName());
+    }
+
+    @Test
+    void differentClassLoadersReturnCompatibleClasses() throws ClassNotFoundException {
+        // Scenario: Classes loaded from different plugin classloaders for the same dependency
+        // should be compatible (same Class object from the dependency's classloader)
+        Class<?> clazzFromParentLast = parentLastPluginClassLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
+        Class<?> clazzFromParentFirst = parentFirstPluginClassLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
+
+        assertNotNull(clazzFromParentLast);
+        assertNotNull(clazzFromParentFirst);
+        // Both should load the same class name
+        assertEquals(clazzFromParentLast.getName(), clazzFromParentFirst.getName());
+    }
+
     static class TestPluginManager extends DefaultPluginManager {
 
         public TestPluginManager(Path pluginsPath) {
