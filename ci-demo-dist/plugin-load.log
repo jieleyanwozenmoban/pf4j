@@ -1,0 +1,156 @@
+11:21:49 [main] INFO org.pf4j.demo.Boot - ########################################
+11:21:49 [main] INFO org.pf4j.demo.Boot -                PF4J-DEMO                
+11:21:49 [main] INFO org.pf4j.demo.Boot - ########################################
+11:21:49 [main] INFO org.pf4j.DefaultPluginStatusProvider - Enabled plugins: []
+11:21:49 [main] INFO org.pf4j.DefaultPluginStatusProvider - Disabled plugins: []
+11:21:49 [main] INFO org.pf4j.DefaultPluginManager - PF4J version 3.16.0-SNAPSHOT in 'deployment' mode
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Lookup plugins in '[plugins]'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Found 2 possible plugins: [plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar, plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar]
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Use 'org.pf4j.CompoundPluginDescriptorFinder@2c13da15' to find plugins descriptors
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Finding plugin descriptor for plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - 'org.pf4j.PropertiesPluginDescriptorFinder@77556fd' is applicable for plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.PropertiesPluginDescriptorFinder - Lookup plugin descriptor in 'plugin.properties'
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - Cannot find 'plugin.properties' path
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - Try to continue with the next finder
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - 'org.pf4j.ManifestPluginDescriptorFinder@63e31ee' is applicable for plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Found descriptor PluginDescriptor [pluginId=welcome-plugin, pluginClass=org.pf4j.demo.welcome.WelcomePlugin, version=0.0.1, provider=Decebal Suiu, dependencies=[], description=, requires=*, license=null]
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Class 'org.pf4j.demo.welcome.WelcomePlugin' for plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Loading plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginLoader - 'org.pf4j.demo.DemoPluginLoader$2@6c629d6e' is applicable for plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.PluginClassLoader - Add 'file:/app/ci-demo-dist/plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Loaded plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar' with class loader 'org.pf4j.demo.DemoPluginClassLoader@4fccd51b'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Creating wrapper for plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Created wrapper 'PluginWrapper [descriptor=PluginDescriptor [pluginId=welcome-plugin, pluginClass=org.pf4j.demo.welcome.WelcomePlugin, version=0.0.1, provider=Decebal Suiu, dependencies=[], description=, requires=*, license=null], pluginPath=plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar]' for plugin 'plugins/pf4j-demo-plugin1-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Use 'org.pf4j.CompoundPluginDescriptorFinder@2c13da15' to find plugins descriptors
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Finding plugin descriptor for plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - 'org.pf4j.PropertiesPluginDescriptorFinder@77556fd' is applicable for plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.PropertiesPluginDescriptorFinder - Lookup plugin descriptor in 'plugin.properties'
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - Cannot find 'plugin.properties' path
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - Try to continue with the next finder
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginDescriptorFinder - 'org.pf4j.ManifestPluginDescriptorFinder@63e31ee' is applicable for plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Found descriptor PluginDescriptor [pluginId=hello-plugin, pluginClass=org.pf4j.demo.hello.HelloPlugin, version=0.0.1, provider=Decebal Suiu, dependencies=[], description=, requires=*, license=null]
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Class 'org.pf4j.demo.hello.HelloPlugin' for plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Loading plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.CompoundPluginLoader - 'org.pf4j.demo.DemoPluginLoader$2@6c629d6e' is applicable for plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.PluginClassLoader - Add 'file:/app/ci-demo-dist/plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Loaded plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar' with class loader 'org.pf4j.demo.DemoPluginClassLoader@7d4793a8'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Creating wrapper for plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.AbstractPluginManager - Created wrapper 'PluginWrapper [descriptor=PluginDescriptor [pluginId=hello-plugin, pluginClass=org.pf4j.demo.hello.HelloPlugin, version=0.0.1, provider=Decebal Suiu, dependencies=[], description=, requires=*, license=null], pluginPath=plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar]' for plugin 'plugins/pf4j-demo-plugin2-3.16.0-SNAPSHOT-all.jar'
+11:21:49 [main] DEBUG org.pf4j.DependencyResolver - Graph: 
+   welcome-plugin -> []
+   hello-plugin -> []
+11:21:49 [main] DEBUG org.pf4j.DependencyResolver - Plugins order: [welcome-plugin, hello-plugin]
+11:21:49 [main] INFO org.pf4j.AbstractPluginManager - Plugin 'welcome-plugin@0.0.1' resolved
+11:21:49 [main] INFO org.pf4j.AbstractPluginManager - Plugin 'hello-plugin@0.0.1' resolved
+11:21:49 [main] INFO org.pf4j.AbstractPluginManager - Start plugin 'welcome-plugin@0.0.1'
+11:21:49 [main] DEBUG org.pf4j.DefaultPluginFactory - Create instance for plugin 'org.pf4j.demo.welcome.WelcomePlugin'
+11:21:49 [main] INFO org.pf4j.demo.welcome.WelcomePlugin - WelcomePlugin.start()
+11:21:49 [main] INFO org.pf4j.AbstractPluginManager - Start plugin 'hello-plugin@0.0.1'
+11:21:49 [main] DEBUG org.pf4j.DefaultPluginFactory - Create instance for plugin 'org.pf4j.demo.hello.HelloPlugin'
+11:21:49 [main] INFO org.pf4j.demo.hello.HelloPlugin - HelloPlugin.start()
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Reading extensions storages from classpath
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Read 'file:/app/ci-demo-dist/pf4j-demo.jar!/META-INF/extensions.idx'
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Read 'file:/app/ci-demo-dist/lib/pf4j-demo-api-3.16.0-SNAPSHOT.jar!/META-INF/extensions.idx'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found possible 1 extensions:
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder -    org.pf4j.demo.WhazzupGreeting
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Reading extensions storages from plugins
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Reading extensions storage from plugin 'welcome-plugin'
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Read 'META-INF/extensions.idx'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found possible 1 extensions:
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder -    org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Reading extensions storage from plugin 'hello-plugin'
+11:21:49 [main] DEBUG org.pf4j.IndexedExtensionFinder - Read 'META-INF/extensions.idx'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found possible 1 extensions:
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder -    org.pf4j.demo.hello.HelloPlugin$HelloGreeting
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'null'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.WhazzupGreeting' using class loader 'jdk.internal.loader.ClassLoaders$AppClassLoader@639fee48'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.WhazzupGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.WhazzupGreeting' with ordinal 0
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'welcome-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@4fccd51b'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' with ordinal 0
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'hello-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@7d4793a8'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' with ordinal 1
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 3 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.WhazzupGreeting'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot - Found 3 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot - >>> Whazzup
+11:21:49 [main] INFO org.pf4j.demo.Boot - >>> Welcome
+11:21:49 [main] INFO org.pf4j.demo.Boot - >>> Hello
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions added by classpath:
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.WhazzupGreeting
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extension classes by classpath:
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'null'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.WhazzupGreeting' using class loader 'jdk.internal.loader.ClassLoaders$AppClassLoader@639fee48'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.WhazzupGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.WhazzupGreeting' with ordinal 0
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'welcome-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@4fccd51b'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' with ordinal 0
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'hello-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@7d4793a8'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' with ordinal 1
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 3 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot -    Class: org.pf4j.demo.WhazzupGreeting
+11:21:49 [main] INFO org.pf4j.demo.Boot -    Class: org.pf4j.demo.welcome.WelcomePlugin.WelcomeGreeting
+11:21:49 [main] INFO org.pf4j.demo.Boot -    Class: org.pf4j.demo.hello.HelloPlugin.HelloGreeting
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions added by plugin 'welcome-plugin}':
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions added by plugin 'hello-plugin}':
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.hello.HelloPlugin$HelloGreeting
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions instances added by plugin 'welcome-plugin' for extension point 'org.pf4j.demo.api.Greeting':
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'welcome-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@4fccd51b'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' with ordinal 0
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting@59a6e353
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions instances added by plugin 'hello-plugin' for extension point 'org.pf4j.demo.api.Greeting':
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions of extension point 'org.pf4j.demo.api.Greeting' for plugin 'hello-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@7d4793a8'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Checking extension type 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' with ordinal 1
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for extension point 'org.pf4j.demo.api.Greeting'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.hello.HelloPlugin$HelloGreeting@7a0ac6e3
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions instances added by classpath:
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions from plugin 'null'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.WhazzupGreeting' using class loader 'jdk.internal.loader.ClassLoaders$AppClassLoader@639fee48'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.WhazzupGreeting' with ordinal 0
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for plugin 'null'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.WhazzupGreeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.WhazzupGreeting@71be98f5
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions instances added by plugin 'welcome-plugin':
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions from plugin 'welcome-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@4fccd51b'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting' with ordinal 0
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for plugin 'welcome-plugin'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.welcome.WelcomePlugin$WelcomeGreeting@6fadae5d
+11:21:49 [main] INFO org.pf4j.demo.Boot - Extensions instances added by plugin 'hello-plugin':
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Finding extensions from plugin 'hello-plugin'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Loading class 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' using class loader 'org.pf4j.demo.DemoPluginClassLoader@7d4793a8'
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Added extension 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting' with ordinal 1
+11:21:49 [main] DEBUG org.pf4j.AbstractExtensionFinder - Found 1 extensions for plugin 'hello-plugin'
+11:21:49 [main] DEBUG org.pf4j.DefaultExtensionFactory - Create instance for extension 'org.pf4j.demo.hello.HelloPlugin$HelloGreeting'
+11:21:49 [main] INFO org.pf4j.demo.Boot -    org.pf4j.demo.hello.HelloPlugin$HelloGreeting@17f6480
+11:21:49 [main] INFO org.pf4j.AbstractPluginManager - Stop plugin 'hello-plugin@0.0.1'
+11:21:49 [main] INFO org.pf4j.demo.hello.HelloPlugin - HelloPlugin.stop()
+11:21:49 [main] INFO org.pf4j.AbstractPluginManager - Stop plugin 'welcome-plugin@0.0.1'
+11:21:49 [main] INFO org.pf4j.demo.welcome.WelcomePlugin - WelcomePlugin.stop()
