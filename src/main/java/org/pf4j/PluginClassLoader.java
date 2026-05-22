@@ -122,52 +122,78 @@ public class PluginClassLoader extends URLClassLoader {
     @Override
     public Class<?> loadClass(String className) throws ClassNotFoundException {
         synchronized (getClassLoadingLock(className)) {
-            // first check whether it's a system class, delegate to the system loader
-            if (className.startsWith(JAVA_PACKAGE_PREFIX)) {
-                return findSystemClass(className);
-            }
-
-            // if the class is part of the plugin engine use parent class loader
-            if (shouldDelegateToParent(className)) {
-//                log.trace("Delegate the loading of PF4J class '{}' to parent", className);
-                return getParent().loadClass(className);
-            }
-
-            log.trace("Received request to load class '{}'", className);
-
-            // second check whether it's already been loaded
-            Class<?> loadedClass = findLoadedClass(className);
-            if (loadedClass != null) {
-                log.trace("Found loaded class '{}'", className);
-                return loadedClass;
-            }
-
-            for (ClassLoadingStrategy.Source classLoadingSource : classLoadingStrategy.getSources()) {
-                Class<?> c = null;
-                try {
-                    switch (classLoadingSource) {
-                        case APPLICATION:
-                            c = super.loadClass(className);
-                            break;
-                        case PLUGIN:
-                            c = findClass(className);
-                            break;
-                        case DEPENDENCIES:
-                            c = loadClassFromDependencies(className);
-                            break;
-                    }
-                } catch (ClassNotFoundException ignored) {}
-
-                if (c != null) {
-                    log.trace("Found class '{}' in {} classpath", className, classLoadingSource);
-                    return c;
-                } else {
-                    log.trace("Couldn't find class '{}' in {} classpath", className, classLoadingSource);
-                }
-            }
-
-            throw new ClassNotFoundException(className);
+            return loadClass(className, classLoadingStrategy.getSources());
         }
+    }
+
+    private Class<?> loadClass(String className, List<ClassLoadingStrategy.Source> sources) throws ClassNotFoundException {
+        if (className.startsWith(JAVA_PACKAGE_PREFIX)) {
+            return findSystemClass(className);
+        }
+
+        if (shouldDelegateToParent(className)) {
+            return loadClassFromApplication(className);
+        }
+
+        log.trace("Received request to load class '{}'", className);
+
+        Class<?> loadedClass = findLoadedClass(className);
+        if (loadedClass != null) {
+            log.trace("Found loaded class '{}'", className);
+            return loadedClass;
+        }
+
+        for (ClassLoadingStrategy.Source classLoadingSource : sources) {
+            Class<?> loaded = tryLoadClass(className, classLoadingSource);
+            if (loaded != null) {
+                log.trace("Found class '{}' in {} classpath", className, classLoadingSource);
+                return loaded;
+            }
+
+            log.trace("Couldn't find class '{}' in {} classpath", className, classLoadingSource);
+        }
+
+        throw new ClassNotFoundException(className);
+    }
+
+    private Class<?> tryLoadClass(String className, ClassLoadingStrategy.Source classLoadingSource) {
+        try {
+            switch (classLoadingSource) {
+                case APPLICATION:
+                    return loadClassFromApplication(className);
+                case PLUGIN:
+                    return findClass(className);
+                case DEPENDENCIES:
+                    return loadClassFromDependencies(className);
+                default:
+                    return null;
+            }
+        } catch (ClassNotFoundException ignored) {
+            return null;
+        }
+    }
+
+    private Class<?> loadClassFromDependency(String className) throws ClassNotFoundException {
+        List<ClassLoadingStrategy.Source> dependencySources = new ArrayList<>(classLoadingStrategy.getSources().size());
+        dependencySources.add(ClassLoadingStrategy.Source.APPLICATION);
+        for (ClassLoadingStrategy.Source source : classLoadingStrategy.getSources()) {
+            if (source != ClassLoadingStrategy.Source.APPLICATION) {
+                dependencySources.add(source);
+            }
+        }
+
+        synchronized (getClassLoadingLock(className)) {
+            return loadClass(className, dependencySources);
+        }
+    }
+
+    protected Class<?> loadClassFromApplication(String className) throws ClassNotFoundException {
+        ClassLoader parent = getParent();
+        if (parent != null) {
+            return parent.loadClass(className);
+        }
+
+        return findSystemClass(className);
     }
 
     /**
@@ -290,15 +316,17 @@ public class PluginClassLoader extends URLClassLoader {
         for (PluginDependency dependency : dependencies) {
             ClassLoader classLoader = pluginManager.getPluginClassLoader(dependency.getPluginId());
 
-            // If the dependency is marked as optional, its class loader might not be available.
             if (classLoader == null && dependency.isOptional()) {
                 continue;
             }
 
             try {
+                if (classLoader instanceof PluginClassLoader) {
+                    return ((PluginClassLoader) classLoader).loadClassFromDependency(className);
+                }
+
                 return classLoader.loadClass(className);
             } catch (ClassNotFoundException e) {
-                // try next dependency
             }
         }
 
@@ -317,7 +345,6 @@ public class PluginClassLoader extends URLClassLoader {
         for (PluginDependency dependency : dependencies) {
             PluginClassLoader classLoader = (PluginClassLoader) pluginManager.getPluginClassLoader(dependency.getPluginId());
 
-            // If the dependency is marked as optional, its class loader might not be available.
             if (classLoader == null && dependency.isOptional()) {
                 continue;
             }
@@ -345,7 +372,6 @@ public class PluginClassLoader extends URLClassLoader {
         for (PluginDependency dependency : dependencies) {
             PluginClassLoader classLoader = (PluginClassLoader) pluginManager.getPluginClassLoader(dependency.getPluginId());
 
-            // If the dependency is marked as optional, its class loader might not be available.
             if (classLoader == null && dependency.isOptional()) {
                 continue;
             }

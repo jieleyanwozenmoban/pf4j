@@ -15,6 +15,7 @@
  */
 package org.pf4j;
 
+import com.google.testing.compile.JavaFileObjects;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,7 @@ import org.pf4j.processor.LegacyExtensionStorage;
 import org.pf4j.test.JavaFileObjectUtils;
 import org.pf4j.test.JavaSources;
 import org.pf4j.test.PluginZip;
+import org.pf4j.test.TestExtension;
 import org.pf4j.util.FileUtils;
 
 import javax.tools.JavaFileObject;
@@ -47,12 +49,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Sebastian Lövdahl
  */
 class PluginClassLoaderTest {
+
+    private static final String CONFLICT_CLASS_NAME = TestExtension.class.getName();
+    private static final String DEPENDENCY_CONFLICT_MESSAGE = "dependency";
+    private static final String PLUGIN_CONFLICT_MESSAGE = "plugin";
+    private static final String PARENT_CONFLICT_MESSAGE = "I am a test extension";
 
     private TestPluginManager pluginManager;
     private TestPluginManager pluginManagerParentFirst;
@@ -77,7 +85,6 @@ class PluginClassLoaderTest {
         Path metaInfPath = parentClassPathBase.resolve("META-INF");
         File metaInfFile = metaInfPath.toFile();
         if (metaInfFile.mkdir()) {
-            // Only delete the directory if this test created it, guarding for any future usages of the directory.
             metaInfFile.deleteOnExit();
         }
 
@@ -116,11 +123,15 @@ class PluginClassLoaderTest {
             .map(javaFileObject -> new AbstractMap.SimpleEntry<>(JavaFileObjectUtils.getClassName(javaFileObject), javaFileObject))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
+        JavaFileObject dependencyConflictClass = JavaSources.compile(createConflictClassSource(DEPENDENCY_CONFLICT_MESSAGE));
+        JavaFileObject pluginConflictClass = JavaSources.compile(createConflictClassSource(PLUGIN_CONFLICT_MESSAGE));
+
         Path classesPath = Paths.get("classes");
         Path metaInfPath = classesPath.resolve("META-INF");
 
         Path greetingClassPath = classesPath.resolve(JavaSources.GREETING_CLASS_NAME.replace('.', '/') + ".class");
         Path whaszzupGreetingClassPath = classesPath.resolve(JavaSources.WHAZZUP_GREETING_CLASS_NAME.replace('.', '/') + ".class");
+        Path conflictClassPath = classesPath.resolve(CONFLICT_CLASS_NAME.replace('.', '/') + ".class");
 
         Path pluginDependencyPath = pluginsPath.resolve(pluginDependencyDescriptor.getPluginId() + "-" + pluginDependencyDescriptor.getVersion() + ".zip");
         pluginDependencyZip = new PluginZip.Builder(pluginDependencyPath, pluginDependencyDescriptor.getPluginId())
@@ -131,6 +142,7 @@ class PluginClassLoaderTest {
                 .addFile(classesPath.resolve(LegacyExtensionStorage.EXTENSIONS_RESOURCE), "dependency")
                 .addFile(greetingClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.GREETING_CLASS_NAME)))
                 .addFile(whaszzupGreetingClassPath, JavaFileObjectUtils.getAllBytes(generatedClasses.get(JavaSources.WHAZZUP_GREETING_CLASS_NAME)))
+                .addFile(conflictClassPath, JavaFileObjectUtils.getAllBytes(dependencyConflictClass))
                 .build();
 
         pluginDependencyZip.unzip();
@@ -173,6 +185,7 @@ class PluginClassLoaderTest {
                 .addFile(metaInfPath.resolve("file-in-both-parent-and-dependency-and-plugin"), "plugin")
                 .addFile(metaInfPath.resolve("file-in-both-parent-and-plugin"), "plugin")
                 .addFile(classesPath.resolve(LegacyExtensionStorage.EXTENSIONS_RESOURCE), "plugin")
+                .addFile(conflictClassPath, JavaFileObjectUtils.getAllBytes(pluginConflictClass))
                 .build();
 
         pluginZip.unzip();
@@ -363,6 +376,34 @@ class PluginClassLoaderTest {
     }
 
     @Test
+    void parentLastLoadClassPrefersCurrentPluginOverApplicationAndDependencyOnConflict() throws Exception {
+        Class<?> loadedClass = parentLastPluginClassLoader.loadClass(CONFLICT_CLASS_NAME);
+
+        assertSame(parentLastPluginClassLoader, loadedClass.getClassLoader());
+        assertEquals(PLUGIN_CONFLICT_MESSAGE, invokeSaySomething(loadedClass));
+    }
+
+    @Test
+    void parentLastLoadClassPrefersApplicationOverDependencyOnConflict() throws Exception {
+        PluginClassLoader pluginClassLoader = createPluginClassLoader("applicationWins", "myDependency");
+
+        Class<?> loadedClass = pluginClassLoader.loadClass(CONFLICT_CLASS_NAME);
+
+        assertSame(TestExtension.class, loadedClass);
+        assertEquals(PARENT_CONFLICT_MESSAGE, invokeSaySomething(loadedClass));
+    }
+
+    @Test
+    void parentLastLoadClassLoadsDependencyWhenApplicationAndPluginMiss() throws Exception {
+        PluginClassLoader pluginClassLoader = createPluginClassLoader("dependencyWinsWhenOnlyDependencyHasClass", "myDependency");
+
+        Class<?> loadedClass = pluginClassLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
+
+        assertSame(parentLastPluginDependencyClassLoader, loadedClass.getClassLoader());
+        assertEquals(JavaSources.GREETING_CLASS_NAME, loadedClass.getName());
+    }
+
+    @Test
     void isClosed() throws IOException {
         parentLastPluginClassLoader.close();
         assertTrue(parentLastPluginClassLoader.isClosed());
@@ -370,7 +411,6 @@ class PluginClassLoaderTest {
 
     @Test
     void collectClassLoader() throws IOException, ClassNotFoundException, InterruptedException {
-        // Create a new classloader
         PluginClassLoader classLoader = new PluginClassLoader(pluginManager, pluginDependencyDescriptor, PluginClassLoaderTest.class.getClassLoader());
         PluginClasspath pluginDependencyClasspath = new DefaultPluginClasspath();
         for (String classesDirectory : pluginDependencyClasspath.getClassesDirectories()) {
@@ -380,20 +420,72 @@ class PluginClassLoaderTest {
 
         WeakReference<PluginClassLoader> weakRef = new WeakReference<>(classLoader);
 
-        // Use the classloader
         classLoader.loadClass(JavaSources.GREETING_CLASS_NAME);
 
-        // Clear strong reference
         classLoader.close();
         classLoader = null;
 
-        // Try to force GC
         System.gc();
         System.runFinalization();
-        Thread.sleep(100); // Give GC a chance to run
+        Thread.sleep(100);
 
-        // Check if ClassLoader was collected
         assertNull(weakRef.get(), "ClassLoader was not garbage collected");
+    }
+
+    private PluginClassLoader createPluginClassLoader(String pluginId, String dependencies) throws IOException {
+        DefaultPluginDescriptor descriptor = new DefaultPluginDescriptor()
+            .setPluginId(pluginId)
+            .setPluginVersion("1.2.3")
+            .setPluginDescription("My plugin")
+            .setDependencies(dependencies)
+            .setProvider("Me")
+            .setRequires("5.0.0");
+
+        Path pluginPath = pluginsPath.resolve(descriptor.getPluginId() + "-" + descriptor.getVersion() + ".zip");
+        PluginZip pluginZip = new PluginZip.Builder(pluginPath, descriptor.getPluginId())
+            .pluginVersion(descriptor.getVersion())
+            .build();
+
+        pluginZip.unzip();
+
+        PluginClassLoader pluginClassLoader = new PluginClassLoader(pluginManager, descriptor, PluginClassLoaderTest.class.getClassLoader(), ClassLoadingStrategy.PDA);
+        pluginManager.addClassLoader(descriptor.getPluginId(), pluginClassLoader);
+        addPluginClasspath(pluginClassLoader, pluginZip.unzippedPath());
+
+        return pluginClassLoader;
+    }
+
+    private void addPluginClasspath(PluginClassLoader pluginClassLoader, Path pluginRoot) {
+        PluginClasspath pluginClasspath = new DefaultPluginClasspath();
+        for (String classesDirectory : pluginClasspath.getClassesDirectories()) {
+            pluginClassLoader.addFile(pluginRoot.resolve(classesDirectory).toFile());
+        }
+
+        for (String jarsDirectory : pluginClasspath.getJarsDirectories()) {
+            Path jarsDirectoryPath = pluginRoot.resolve(jarsDirectory);
+            List<File> jars = FileUtils.getJars(jarsDirectoryPath);
+            for (File jar : jars) {
+                pluginClassLoader.addFile(jar);
+            }
+        }
+    }
+
+    private static JavaFileObject createConflictClassSource(String message) {
+        return JavaFileObjects.forSourceLines(CONFLICT_CLASS_NAME,
+            "package org.pf4j.test;",
+            "import org.pf4j.Extension;",
+            "@Extension",
+            "public class TestExtension implements TestExtensionPoint {",
+            "    @Override",
+            "    public String saySomething() {",
+            "        return \"" + message + "\";",
+            "    }",
+            "}");
+    }
+
+    private static String invokeSaySomething(Class<?> type) throws Exception {
+        Object extension = type.getDeclaredConstructor().newInstance();
+        return (String) type.getMethod("saySomething").invoke(extension);
     }
 
     private static void assertFirstLine(String expected, URL resource) throws URISyntaxException, IOException {
@@ -418,7 +510,6 @@ class PluginClassLoaderTest {
 
     @Test
     void shouldDelegateToParentForDemoClasses() {
-        // org.pf4j.demo is not excluded, so it should be delegated to parent like any other org.pf4j.* class
         assertTrue(parentLastPluginClassLoader.shouldDelegateToParent("org.pf4j.demo.Boot"));
         assertTrue(parentLastPluginClassLoader.shouldDelegateToParent("org.pf4j.demo.api.Greeting"));
     }
@@ -437,8 +528,6 @@ class PluginClassLoaderTest {
 
     @Test
     void shouldDelegateToParentCanBeOverridden() {
-        // Create a custom classloader that adds custom exclusion for org.pf4j.plus.demo
-        // This demonstrates how framework extensions (like PF4J-Plus) can exclude their own demo packages
         PluginClassLoader customClassLoader = new PluginClassLoader(pluginManager, pluginDescriptor, PluginClassLoaderTest.class.getClassLoader()) {
             @Override
             protected boolean shouldDelegateToParent(String className) {
@@ -447,15 +536,10 @@ class PluginClassLoaderTest {
             }
         };
 
-        // Verify that org.pf4j.plus.demo classes are NOT delegated to parent (custom exclusion)
         assertFalse(customClassLoader.shouldDelegateToParent("org.pf4j.plus.demo.Boot"));
         assertFalse(customClassLoader.shouldDelegateToParent("org.pf4j.plus.demo.plugins.PluginA"));
-
-        // Verify that other org.pf4j classes are still delegated to parent
         assertTrue(customClassLoader.shouldDelegateToParent("org.pf4j.PluginManager"));
         assertTrue(customClassLoader.shouldDelegateToParent("org.pf4j.Extension"));
-
-        // Verify that test exclusions still work
         assertFalse(customClassLoader.shouldDelegateToParent("org.pf4j.test.TestExtension"));
     }
 
