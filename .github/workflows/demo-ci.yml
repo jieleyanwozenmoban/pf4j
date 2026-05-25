@@ -1,0 +1,155 @@
+name: Demo CI
+
+on:
+  push:
+    branches:
+      - '*'
+    paths:
+      - 'src/**'
+      - 'demo/maven/**'
+      - 'pom.xml'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'src/**'
+      - 'demo/maven/**'
+      - 'pom.xml'
+  workflow_dispatch:
+
+jobs:
+  build-and-verify:
+    name: Build & Verify Demo
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+          cache: maven
+
+      - name: Phase 1 - Build pf4j-core and run unit tests
+        run: |
+          echo "========================================"
+          echo " Phase 1: Build pf4j-core + Unit Tests "
+          echo "========================================"
+          mvn -B clean install
+          echo ""
+          echo "pf4j-core build and tests completed."
+
+      - name: Upload pf4j-core test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pf4j-core-test-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+      - name: Phase 2 - Build demo multi-module (api, app, plugins)
+        run: |
+          echo "====================================================="
+          echo " Phase 2: Build Demo Multi-Module (api/app/plugins) "
+          echo "====================================================="
+          cd demo/maven
+          mvn -B clean package
+          echo ""
+          echo "Demo modules build completed."
+
+      - name: Phase 3 - Assemble demo runtime directory
+        run: |
+          echo "===================================="
+          echo " Phase 3: Assemble Runtime Layout  "
+          echo "===================================="
+
+          rm -rf demo-dist
+          mkdir -p demo-dist/plugins
+
+          APP_ZIP=$(ls demo/maven/app/target/pf4j-demo-app-*.zip | head -1)
+          echo "Using app distribution: $APP_ZIP"
+          cp "$APP_ZIP" demo-dist/
+
+          cp demo/maven/plugins/plugin1/target/pf4j-demo-plugin1-*-all.jar demo-dist/plugins/
+          cp demo/maven/plugins/plugin2/target/pf4j-demo-plugin2-*-all.jar demo-dist/plugins/
+          cp demo/maven/plugins/enabled.txt demo-dist/plugins/
+          cp demo/maven/plugins/disabled.txt demo-dist/plugins/
+
+          cd demo-dist
+          jar xf pf4j-demo-app-*.zip
+          rm -f pf4j-demo-app-*.zip
+          mv pf4j-demo-app-*-SNAPSHOT.jar pf4j-demo.jar
+          cd ..
+
+          echo ""
+          echo "Runtime directory layout:"
+          find demo-dist -type f | sort
+          echo ""
+          echo "Assembly completed."
+
+      - name: Phase 4 - Run demo and verify plugin loading
+        run: |
+          echo "============================================="
+          echo " Phase 4: Run Demo & Verify Plugin Loading  "
+          echo "============================================="
+
+          cd demo-dist
+
+          set +o pipefail
+          java -jar pf4j-demo.jar 2>&1 | tee demo-output.log
+          JAVA_EXIT=${PIPESTATUS[0]}
+          set -o pipefail
+
+          if [ "$JAVA_EXIT" -ne 0 ]; then
+            echo "[FAIL] Demo application exited with code $JAVA_EXIT"
+            exit 1
+          fi
+
+          echo ""
+          echo "========== Plugin Loading Verification =========="
+
+          FAILED=0
+
+          check_log() {
+            local pattern="$1"
+            local description="$2"
+            if grep -q "$pattern" demo-output.log; then
+              echo "  [PASS] $description"
+            else
+              echo "  [FAIL] $description - expected log pattern not found: '$pattern'"
+              FAILED=1
+            fi
+          }
+
+          check_log "WelcomePlugin.start()"   "Welcome Plugin (plugin1) loaded and started"
+          check_log "HelloPlugin.start()"     "Hello Plugin (plugin2) loaded and started"
+          check_log ">>> Welcome"             "WelcomeGreeting extension point executed"
+          check_log ">>> Hello"               "HelloGreeting extension point executed"
+          check_log ">>> Whazzup"             "WhazzupGreeting extension point executed (classpath)"
+          check_log "WelcomePlugin.stop()"    "Welcome Plugin stopped gracefully"
+          check_log "HelloPlugin.stop()"      "Hello Plugin stopped gracefully"
+          check_log "Found.*extensions for extension point" "Extension discovery summary logged"
+
+          echo "==================================================="
+          if [ "$FAILED" -eq 0 ]; then
+            echo ""
+            echo "  ALL CHECKS PASSED - Plugins loaded and extensions executed successfully"
+            echo ""
+            echo "==================================================="
+          else
+            echo ""
+            echo "  SOME CHECKS FAILED - See details above"
+            echo ""
+            echo "==================================================="
+            exit 1
+          fi
+
+      - name: Upload demo runtime artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-runtime-distribution
+          path: demo-dist/
+          retention-days: 7
