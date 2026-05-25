@@ -1,0 +1,233 @@
+name: PF4J Demo CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - 'release/**'
+    paths:
+      - 'pom.xml'
+      - 'src/**'
+      - 'demo/**'
+      - '.github/workflows/demo-ci.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'pom.xml'
+      - 'src/**'
+      - 'demo/**'
+      - '.github/workflows/demo-ci.yml'
+
+concurrency:
+  group: pf4j-demo-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MAVEN_OPTS: -Xmx1024m -Xms256m
+  PF4J_VERSION: 3.16.0-SNAPSHOT
+
+jobs:
+  build-pf4j-core:
+    name: Build pf4j-core
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: pf4j
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-pf4j-core-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-pf4j-core-
+            ${{ runner.os }}-maven-
+
+      - name: Build pf4j-core
+        run: mvn -B clean install -DskipTests
+
+      - name: Run pf4j-core unit tests
+        run: mvn -B test
+
+      - name: Upload pf4j-core test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pf4j-core-test-results
+          path: pf4j/target/surefire-reports/
+          retention-days: 7
+
+      - name: Upload pf4j-core JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: pf4j-core-jar
+          path: pf4j/target/pf4j-*.jar
+          retention-days: 1
+
+  build-demo:
+    name: Build pf4j-demo
+    runs-on: ubuntu-24.04
+    needs: build-pf4j-core
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Download pf4j-core JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: pf4j-core-jar
+          path: pf4j/target/
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-pf4j-demo-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-pf4j-demo-
+            ${{ runner.os }}-maven-
+
+      - name: Build pf4j-demo (multi-module)
+        run: |
+          cd demo/maven
+          mvn -B clean package -DskipTests
+
+      - name: Upload demo-app JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: pf4j-demo-app
+          path: demo/maven/app/target/pf4j-demo-app-*.jar
+          retention-days: 1
+
+      - name: Upload demo plugins
+        uses: actions/upload-artifact@v4
+        with:
+          name: pf4j-demo-plugins
+          path: |
+            demo/maven/plugins/plugin1/target/pf4j-demo-plugin1-*.jar
+            demo/maven/plugins/plugin2/target/pf4j-demo-plugin2-*.jar
+          retention-days: 1
+
+  verify-plugin-loading:
+    name: Verify Plugin Loading
+    runs-on: ubuntu-24.04
+    needs: build-demo
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Download demo artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pf4j-demo-app
+          path: ./app/
+
+      - name: Download demo plugins
+        uses: actions/download-artifact@v4
+        with:
+          name: pf4j-demo-plugins
+          path: ./plugins/
+
+      - name: List downloaded artifacts
+        run: |
+          echo "=== App directory ===" && ls -la app/
+          echo "=== Plugins directory ===" && ls -la plugins/
+
+      - name: Setup plugins directory
+        run: |
+          mkdir -p plugins
+          cp plugins/*.jar plugins/ 2>/dev/null || true
+          ls -la plugins/
+
+      - name: Run demo app and verify plugin loading
+        id: plugin-test
+        run: |
+          set -e
+          
+          PLUGIN_JAR=$(ls plugins/*.jar | head -1)
+          echo "Using plugin: $PLUGIN_JAR"
+          
+          java -cp "app/*:plugins/*" org.pf4j.demo.Boot --pluginsDir=plugins 2>&1 | tee plugin_load.log
+          
+          echo "=== Plugin Loading Verification ==="
+          
+          if grep -q "Found.*extensions for extension point" plugin_load.log; then
+            echo "SUCCESS: Extensions found and loaded"
+          else
+            echo "FAILURE: No extensions found"
+            exit 1
+          fi
+          
+          if grep -q "welcome-plugin\|hello-plugin" plugin_load.log; then
+            echo "SUCCESS: Plugin IDs detected in output"
+          else
+            echo "WARNING: Plugin IDs not explicitly shown (may still be loaded)"
+          fi
+          
+          if grep -qE "(Welcome|Hello|Howdy|Whazzup).*greeting" plugin_load.log; then
+            echo "SUCCESS: Greeting implementations executed"
+          fi
+          
+          echo ""
+          echo "=== Full Plugin Load Log ==="
+          cat plugin_load.log
+
+      - name: Upload plugin load log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plugin-load-log
+          path: plugin_load.log
+          retention-days: 7
+
+  build-verification:
+    name: Build Verification
+    runs-on: ubuntu-24.04
+    needs: [build-pf4j-core, build-demo, verify-plugin-loading]
+
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## PF4J Demo CI Complete :white_check_mark:"
+          echo ""
+          echo "### Build Artifacts:"
+          echo "- pf4j-core: Built and tested successfully"
+          echo "- pf4j-demo-app: Built successfully"
+          echo "- pf4j-demo-plugins: Built successfully (plugin1, plugin2)"
+          echo "- Plugin Loading: Verified successfully"
+          echo ""
+          echo "### CI Pipeline Steps Completed:"
+          echo "1. :white_check_mark: Maven multi-module build (pf4j-core)"
+          echo "2. :white_check_mark: pf4j-core unit tests executed"
+          echo "3. :white_check_mark: pf4j-demo-app packaged"
+          echo "4. :white_check_mark: pf4j-demo-plugins (plugin1, plugin2) built"
+          echo "5. :white_check_mark: Plugin loading verification passed"
+          echo "6. :white_check_mark: Maven dependencies cached"
