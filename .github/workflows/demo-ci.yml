@@ -1,0 +1,175 @@
+name: Demo CI
+
+on:
+  push:
+    branches:
+      - '*'
+    paths:
+      - '**.java'
+      - '**.xml'
+      - '**.properties'
+      - '.github/workflows/demo-ci.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Verify Demo
+    runs-on: ubuntu-24.04
+
+    env:
+      PF4J_VERSION: 3.16.0-SNAPSHOT
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      # ============================================================
+      # Phase 1: Build pf4j-core and run unit tests
+      # ============================================================
+
+      - name: Build pf4j-core (install to local Maven repo, skip tests)
+        run: mvn -B install -DskipTests -pl . -Dmaven.test.skip=true
+
+      - name: Run pf4j-core unit tests
+        run: mvn -B test -pl .
+
+      # ============================================================
+      # Phase 2: Build demo modules (api, app, plugins)
+      # ============================================================
+
+      - name: Build pf4j-demo multi-module (api, app, plugins)
+        run: mvn -B package -f demo/maven/pom.xml
+
+      # ============================================================
+      # Phase 3: Prepare plugin loading simulation environment
+      # ============================================================
+
+      - name: Prepare plugins directory
+        run: |
+          APP_ASSEMBLY_DIR="demo/maven/app/target/pf4j-demo-app-${PF4J_VERSION}-app"
+          mkdir -p "${APP_ASSEMBLY_DIR}/plugins"
+
+          # Copy plugin fat jars into plugins directory
+          cp demo/maven/plugins/plugin1/target/pf4j-demo-plugin1-${PF4J_VERSION}-all.jar \
+             "${APP_ASSEMBLY_DIR}/plugins/"
+          cp demo/maven/plugins/plugin2/target/pf4j-demo-plugin2-${PF4J_VERSION}-all.jar \
+             "${APP_ASSEMBLY_DIR}/plugins/"
+
+          echo "=== Plugins directory contents ==="
+          ls -la "${APP_ASSEMBLY_DIR}/plugins/"
+
+          echo "=== App assembly lib contents ==="
+          ls -la "${APP_ASSEMBLY_DIR}/lib/"
+
+      # ============================================================
+      # Phase 4: Run plugin loading simulation
+      # ============================================================
+
+      - name: Simulate plugin loading and verify extension points
+        run: |
+          APP_ASSEMBLY_DIR="demo/maven/app/target/pf4j-demo-app-${PF4J_VERSION}-app"
+
+          echo "=============================================="
+          echo "  Starting PF4J Demo Plugin Loading Test"
+          echo "=============================================="
+
+          cd "${APP_ASSEMBLY_DIR}"
+
+          java -cp "pf4j-demo-app-${PF4J_VERSION}.jar:lib/*" \
+               org.pf4j.demo.Boot \
+               2>&1 | tee boot-output.log
+
+          echo ""
+          echo "=============================================="
+          echo "  Verifying Plugin Loading Results"
+          echo "=============================================="
+
+          # Verify plugin loading success
+          echo ""
+          echo "--- Checking Plugin Loading ---"
+
+          if grep -q "WelcomePlugin.start()" boot-output.log; then
+            echo "[PASS] WelcomePlugin loaded and started successfully"
+          else
+            echo "[FAIL] WelcomePlugin did NOT start"
+            exit 1
+          fi
+
+          if grep -q "HelloPlugin.start()" boot-output.log; then
+            echo "[PASS] HelloPlugin loaded and started successfully"
+          else
+            echo "[FAIL] HelloPlugin did NOT start"
+            exit 1
+          fi
+
+          echo ""
+          echo "--- Checking Extension Point Execution ---"
+
+          if grep -q "Found.*extensions for extension point" boot-output.log; then
+            echo "[PASS] Extension point lookup successful"
+          else
+            echo "[FAIL] Extension point lookup failed"
+            exit 1
+          fi
+
+          if grep -q ">>> Welcome" boot-output.log; then
+            echo "[PASS] Extension 'Welcome' executed"
+          else
+            echo "[FAIL] Extension 'Welcome' not found in output"
+            exit 1
+          fi
+
+          if grep -q ">>> Hello" boot-output.log; then
+            echo "[PASS] Extension 'Hello' executed"
+          else
+            echo "[FAIL] Extension 'Hello' not found in output"
+            exit 1
+          fi
+
+          if grep -q ">>> Whazzup" boot-output.log; then
+            echo "[PASS] Extension 'Whazzup' executed"
+          else
+            echo "[FAIL] Extension 'Whazzup' not found in output"
+            exit 1
+          fi
+
+          echo ""
+          echo "--- Checking Plugin Stop ---"
+
+          if grep -q "WelcomePlugin.stop()" boot-output.log; then
+            echo "[PASS] WelcomePlugin stopped gracefully"
+          else
+            echo "[FAIL] WelcomePlugin did NOT stop"
+            exit 1
+          fi
+
+          if grep -q "HelloPlugin.stop()" boot-output.log; then
+            echo "[PASS] HelloPlugin stopped gracefully"
+          else
+            echo "[FAIL] HelloPlugin did NOT stop"
+            exit 1
+          fi
+
+          echo ""
+          echo "=============================================="
+          echo "  ALL CHECKS PASSED - Plugin Loading Verified"
+          echo "=============================================="
+
+      - name: Upload boot output log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-loading-log
+          path: demo/maven/app/target/pf4j-demo-app-*-app/boot-output.log
+          retention-days: 7
